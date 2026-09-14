@@ -1,0 +1,298 @@
+/**
+ * Deterministic keyword lexicon for technology-company resumes and job descriptions.
+ *
+ * Matching is intentionally flat: every term participates in the same scan. Section
+ * comments only make this file easier to maintain; they do not affect priority.
+ *
+ * `terms` are extraction aliases for one concept. They are not all exact resume
+ * matches. The matcher should still apply the product rule:
+ * - same word family / inflection => green
+ * - abbreviation, synonym, or related wording => yellow
+ * - no supported wording => red
+ */
+
+export type KeywordConcept = Readonly<{
+  id: string;
+  label: string;
+  terms: readonly string[];
+}>;
+
+export const KEYWORD_LEXICON_VERSION = "1.2.0";
+
+export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
+  // Product management and product strategy
+  { id: "product_strategy", label: "product strategy", terms: ["product strategy", "strategic product direction"] },
+  { id: "product_vision", label: "product vision", terms: ["product vision", "vision for the product", "product direction"] },
+  { id: "product_roadmap", label: "product roadmap", terms: ["product roadmap", "roadmap", "roadmapping", "roadmap planning"] },
+  { id: "product_planning", label: "product planning", terms: ["product planning", "product plan"] },
+  { id: "product_requirements", label: "product requirements", terms: ["product requirements", "business requirements", "functional requirements"] },
+  { id: "prd", label: "product requirements document", terms: ["product requirements document", "prd"] },
+  { id: "user_stories", label: "user stories", terms: ["user story"] },
+  { id: "acceptance_criteria", label: "acceptance criteria", terms: ["acceptance criteria", "definition of done"] },
+  { id: "product_prioritization", label: "product prioritization", terms: ["product prioritization", "feature prioritization", "prioritize features", "priority setting"] },
+  { id: "backlog_management", label: "backlog management", terms: ["backlog management", "product backlog", "backlog prioritization"] },
+  { id: "product_discovery", label: "product discovery", terms: ["product discovery", "discovery process", "opportunity discovery"] },
+  { id: "product_development", label: "product development", terms: ["product development", "product creation"] },
+  { id: "product_lifecycle", label: "product lifecycle", terms: ["product lifecycle", "product life cycle", "lifecycle management", "end-to-end lifecycle"] },
+  { id: "product_launch", label: "product launch", terms: ["product launch", "launch planning", "launch execution"] },
+  { id: "mvp", label: "minimum viable product", terms: ["minimum viable product", "mvp", "minimum lovable product"] },
+  { id: "zero_to_one", label: "0-to-1", terms: ["0-to-1", "0 to 1", "zero-to-one", "zero to one", "greenfield product", "new product development"] },
+  { id: "feature_development", label: "feature development", terms: ["feature development", "feature definition", "feature delivery"] },
+  { id: "product_iteration", label: "product iteration", terms: ["product iteration", "continuous iteration"] },
+  { id: "use_cases", label: "use cases", terms: ["use case", "customer use cases"] },
+  { id: "trade_offs", label: "trade-offs", terms: ["trade-off", "tradeoff", "product trade-offs", "technical trade-offs"] },
+  { id: "decision_making", label: "decision-making", terms: ["decision-making", "decision making", "product decisions", "strategic decisions"] },
+  { id: "product_operations", label: "product operations", terms: ["product operations", "product ops"] },
+  { id: "product_portfolio", label: "product portfolio", terms: ["product portfolio", "portfolio management", "portfolio strategy"] },
+  { id: "product_market_fit", label: "product-market fit", terms: ["product-market fit", "product market fit", "pmf", "market fit"] },
+  { id: "build_buy_partner", label: "build, buy, or partner", terms: ["build, buy, or partner", "build-buy-partner", "build vs. buy", "build versus buy", "buy/build/partner"] },
+  { id: "product_goals", label: "product goals", terms: ["product goals", "business goals", "strategic goals"] },
+  { id: "okrs", label: "objectives and key results", terms: ["objectives and key results", "objective and key results", "okr"] },
+  { id: "kpis", label: "key performance indicators", terms: ["key performance indicator", "kpi"] },
+  { id: "success_metrics", label: "success metrics", terms: ["success metric", "product metrics", "performance metrics"] },
+  { id: "input_output_metrics", label: "input and output metrics", terms: ["input metrics", "output metrics", "input and output metrics", "leading indicators", "lagging indicators"] },
+
+  // Customer, user, and market research
+  { id: "customer_needs", label: "customer needs", terms: ["customer need", "customer requirements", "customer problems"] },
+  { id: "user_needs", label: "user needs", terms: ["user need", "user requirements", "user expectations"] },
+  { id: "customer_insights", label: "customer insights", terms: ["customer insight", "consumer insight"] },
+  { id: "market_insights", label: "market insights", terms: ["market insight", "insights into the market", "market intelligence", "market intel"] },
+  { id: "customer_research", label: "customer research", terms: ["customer research", "customer studies"] },
+  { id: "user_research", label: "user research", terms: ["user research", "user studies"] },
+  { id: "ux_research", label: "user experience research", terms: ["user experience research", "ux research", "uxr"] },
+  { id: "market_research", label: "market research", terms: ["market research", "market analysis", "market studies"] },
+  { id: "voice_of_customer", label: "voice of the customer", terms: ["voice of the customer", "voice of customer", "voc"] },
+  { id: "customer_feedback", label: "customer feedback", terms: ["customer feedback", "user feedback", "feedback loop"] },
+  { id: "customer_interviews", label: "customer interviews", terms: ["customer interview", "user interview"] },
+  { id: "surveys", label: "surveys", terms: ["survey", "customer surveys", "user surveys"] },
+  { id: "usability_testing", label: "usability testing", terms: ["usability testing", "usability studies", "user testing"] },
+  { id: "personas", label: "personas", terms: ["persona", "customer personas", "user personas", "buyer personas"] },
+  { id: "segmentation", label: "segmentation", terms: ["segmentation", "customer segmentation", "user segmentation", "market segmentation"] },
+  { id: "user_journey", label: "user journey", terms: ["user journey", "customer journey", "journey mapping"] },
+  { id: "pain_points", label: "pain points", terms: ["pain point", "customer pain points", "user pain points", "unmet needs"] },
+  { id: "jobs_to_be_done", label: "jobs to be done", terms: ["jobs to be done", "job to be done", "jtbd"] },
+  { id: "customer_experience", label: "customer experience", terms: ["customer experience", "cx"] },
+  { id: "user_experience", label: "user experience", terms: ["user experience", "ux"] },
+  { id: "customer_centric", label: "customer-centric", terms: ["customer-centric", "customer obsession"] },
+  { id: "customer_satisfaction", label: "customer satisfaction", terms: ["customer satisfaction", "csat", "satisfaction scores"] },
+  { id: "nps", label: "net promoter score", terms: ["net promoter score", "nps"] },
+  { id: "design_thinking", label: "design thinking", terms: ["design thinking", "human-centered design", "human centred design"] },
+
+  // Product marketing, go-to-market, and growth
+  { id: "product_marketing", label: "product marketing", terms: ["product marketing", "product marketer", "pmm"] },
+  { id: "go_to_market", label: "go-to-market", terms: ["go-to-market", "go to market", "gtm", "gtm strategy", "go-to-market strategy", "gtm execution", "go-to-market execution"] },
+  { id: "positioning", label: "positioning", terms: ["positioning", "product positioning", "market positioning"] },
+  { id: "messaging", label: "messaging", terms: ["messaging", "product messaging", "marketing messages"] },
+  { id: "value_proposition", label: "value proposition", terms: ["value proposition", "customer value proposition", "value narrative"] },
+  { id: "product_narrative", label: "product narrative", terms: ["product narrative", "strategic narrative", "narrative development"] },
+  { id: "storytelling", label: "storytelling", terms: ["storytelling", "product storytelling", "data storytelling"] },
+  { id: "launch_strategy", label: "launch strategy", terms: ["launch strategy", "product launch strategy", "market launch"] },
+  { id: "integrated_marketing", label: "integrated marketing", terms: ["integrated marketing", "integrated campaign"] },
+  { id: "marketing_campaigns", label: "marketing campaigns", terms: ["marketing campaign", "campaign strategy", "campaign execution"] },
+  { id: "demand_generation", label: "demand generation", terms: ["demand generation", "demand gen", "pipeline generation"] },
+  { id: "growth_marketing", label: "growth marketing", terms: ["growth marketing", "growth marketing strategy", "growth initiatives"] },
+  { id: "lifecycle_marketing", label: "lifecycle marketing", terms: ["lifecycle marketing", "customer lifecycle marketing"] },
+  { id: "content_strategy", label: "content strategy", terms: ["content strategy", "content planning", "content development"] },
+  { id: "thought_leadership", label: "thought leadership", terms: ["thought leadership", "category leadership"] },
+  { id: "sales_enablement", label: "sales enablement", terms: ["sales enablement", "field enablement", "enable sales teams"] },
+  { id: "marketing_collateral", label: "marketing collateral", terms: ["marketing collateral", "sales collateral", "product collateral"] },
+  { id: "competitive_intelligence", label: "competitive intelligence", terms: ["competitive intelligence", "competitor intelligence"] },
+  { id: "competitive_analysis", label: "competitive analysis", terms: ["competitive analysis", "competition analysis", "competitor analysis", "competitive research", "competition research", "competitor research", "competitive landscape", "competitor landscape", "competitive landscape analysis"] },
+  { id: "market_trends", label: "market trend", terms: ["market trend", "industry trends", "market dynamics"] },
+  { id: "target_audience", label: "target audience", terms: ["target audience", "target customer", "target market"] },
+  { id: "ideal_customer_profile", label: "ideal customer profile", terms: ["ideal customer profile", "icp"] },
+  { id: "buyer_journey", label: "buyer journey", terms: ["buyer journey", "purchase journey"] },
+  { id: "customer_acquisition", label: "customer acquisition", terms: ["customer acquisition", "user acquisition", "customer acquisition strategy", "user acquisition strategy"] },
+  { id: "adoption", label: "product adoption", terms: ["product adoption", "customer adoption", "user adoption", "adoption strategy"] },
+  { id: "engagement", label: "customer engagement", terms: ["customer engagement", "user engagement", "product engagement"] },
+  { id: "retention", label: "customer retention", terms: ["customer retention", "user retention", "retention strategy"] },
+  { id: "churn", label: "churn", terms: ["churn", "customer churn", "user churn", "churn reduction"] },
+  { id: "monetization", label: "monetization", terms: ["monetization", "monetisation", "monetization strategy", "monetisation strategy"] },
+  { id: "pricing", label: "pricing", terms: ["pricing", "pricing strategy", "price optimization", "price optimisation"] },
+  { id: "packaging", label: "packaging", terms: ["packaging", "product packaging", "pricing and packaging"] },
+  { id: "commercialization", label: "commercialization", terms: ["commercialization", "commercialisation", "commercialization strategy", "commercialisation strategy", "commercial launch"] },
+  { id: "channel_strategy", label: "channel strategy", terms: ["channel strategy", "distribution strategy", "route to market"] },
+  { id: "partner_marketing", label: "partner marketing", terms: ["partner marketing", "channel marketing", "co-marketing"] },
+  { id: "analyst_relations", label: "analyst relations", terms: ["analyst relations", "analyst briefings", "industry analysts"] },
+  { id: "public_relations", label: "public relations", terms: ["public relations", "media relations"] },
+  { id: "customer_advocacy", label: "customer advocacy", terms: ["customer advocacy", "customer references", "advocacy programs"] },
+  { id: "community", label: "community building", terms: ["community building", "community engagement", "community programs"] },
+  { id: "events", label: "event marketing", terms: ["event marketing", "industry events", "conferences", "webinars"] },
+  { id: "localization", label: "localization", terms: ["localization", "localisation", "localized marketing", "internationalization", "internationalisation"] },
+
+  // Business and corporate strategy
+  { id: "business_strategy", label: "business strategy", terms: ["business strategy", "commercial strategy"] },
+  { id: "corporate_strategy", label: "corporate strategy", terms: ["corporate strategy", "enterprise strategy"] },
+  { id: "strategic_planning", label: "strategic planning", terms: ["strategic planning", "strategy development"] },
+  { id: "long_range_planning", label: "long-range planning", terms: ["long-range planning", "long range planning", "long-term planning", "long term planning"] },
+  { id: "annual_planning", label: "annual planning", terms: ["annual planning", "operating planning"] },
+  { id: "growth_strategy", label: "growth strategy", terms: ["growth strategy", "strategic growth"] },
+  { id: "competitive_strategy", label: "competitive strategy", terms: ["competitive strategy", "competitive positioning"] },
+  { id: "market_entry", label: "market entry", terms: ["market entry", "entry strategy", "enter new markets"] },
+  { id: "market_expansion", label: "market expansion", terms: ["market expansion", "geographic expansion", "international expansion"] },
+  { id: "market_sizing", label: "market sizing", terms: ["market sizing", "addressable market", "total addressable market", "serviceable addressable market", "tam", "sam", "som"] },
+  { id: "opportunity_assessment", label: "opportunity assessment", terms: ["opportunity assessment", "opportunity analysis"] },
+  { id: "business_case", label: "business case", terms: ["business case", "investment case"] },
+  { id: "business_model", label: "business model", terms: ["business model", "operating model", "revenue model"] },
+  { id: "financial_modeling", label: "financial modeling", terms: ["financial modeling", "financial modelling", "financial model"] },
+  { id: "scenario_planning", label: "scenario planning", terms: ["scenario planning", "scenario analysis"] },
+  { id: "forecasting", label: "forecasting", terms: ["forecasting", "business forecast", "revenue forecast"] },
+  { id: "resource_allocation", label: "resource allocation", terms: ["resource allocation", "investment allocation"] },
+  { id: "budgeting", label: "budgeting", terms: ["budgeting", "budget planning", "budget management"] },
+  { id: "business_transformation", label: "business transformation", terms: ["business transformation", "digital transformation", "organizational transformation", "organisation transformation"] },
+  { id: "mergers_acquisitions", label: "mergers and acquisitions", terms: ["mergers and acquisitions", "merger and acquisition", "m&a", "m&a strategy"] },
+  { id: "due_diligence", label: "due diligence", terms: ["due diligence", "commercial due diligence"] },
+  { id: "partnerships", label: "partnerships", terms: ["partnership", "strategic partnership"] },
+  { id: "strategic_alliances", label: "strategic alliances", terms: ["strategic alliance", "business alliances"] },
+  { id: "ecosystem_strategy", label: "ecosystem strategy", terms: ["ecosystem strategy", "partner ecosystem"] },
+  { id: "executive_recommendations", label: "executive recommendations", terms: ["executive recommendations", "strategic recommendations"] },
+  { id: "board_communication", label: "board communication", terms: ["board communication", "board presentation", "board materials"] },
+
+  // Analytics, finance, and operating metrics
+  { id: "data_analysis", label: "data analysis", terms: ["data analysis"] },
+  { id: "quantitative_analysis", label: "quantitative analysis", terms: ["quantitative analysis", "quantitative research"] },
+  { id: "qualitative_analysis", label: "qualitative analysis", terms: ["qualitative analysis", "qualitative research"] },
+  { id: "data_driven", label: "data-driven", terms: ["data-driven", "data driven", "data-informed", "data informed", "metrics-driven", "metrics driven"] },
+  { id: "experimentation", label: "experimentation", terms: ["experimentation", "test-and-learn", "test and learn"] },
+  { id: "ab_testing", label: "A/B testing", terms: ["a/b testing", "a/b test", "ab testing", "split testing", "multivariate testing"] },
+  { id: "funnel_analysis", label: "funnel analysis", terms: ["funnel analysis", "conversion funnel"] },
+  { id: "cohort_analysis", label: "cohort analysis", terms: ["cohort analysis", "cohort retention"] },
+  { id: "dashboards", label: "dashboards", terms: ["dashboard", "dashboard development", "performance dashboard"] },
+  { id: "reporting", label: "reporting", terms: ["reporting", "performance reporting", "business reporting"] },
+  { id: "business_intelligence", label: "business intelligence", terms: ["business intelligence", "bi"] },
+  { id: "sql", label: "SQL", terms: ["sql", "database queries"] },
+  { id: "analytics_tools", label: "analytics tools", terms: ["tableau", "power bi", "looker", "amplitude", "mixpanel", "google analytics", "adobe analytics"] },
+  { id: "roi", label: "return on investment", terms: ["return on investment", "roi"] },
+  { id: "revenue", label: "revenue", terms: ["revenue", "revenue growth", "revenue impact"] },
+  { id: "recurring_revenue", label: "recurring revenue", terms: ["annual recurring revenue", "monthly recurring revenue", "recurring revenue", "arr", "mrr"] },
+  { id: "profit_and_loss", label: "P&L", terms: ["p&l", "profit and loss", "p&l ownership"] },
+  { id: "unit_economics", label: "unit economics", terms: ["unit economics", "contribution margin"] },
+  { id: "margin", label: "margin", terms: ["gross margin", "operating margin", "profitability"] },
+  { id: "customer_acquisition_cost", label: "customer acquisition cost", terms: ["customer acquisition cost", "cac"] },
+  { id: "customer_lifetime_value", label: "customer lifetime value", terms: ["customer lifetime value", "lifetime value", "ltv", "clv"] },
+  { id: "conversion", label: "conversion", terms: ["conversion", "conversion rate", "conversion optimization", "conversion optimisation"] },
+  { id: "pipeline", label: "pipeline", terms: ["sales pipeline", "marketing pipeline", "pipeline growth"] },
+  { id: "attribution", label: "attribution", terms: ["attribution", "marketing attribution"] },
+  { id: "measurement", label: "measurement", terms: ["measurement strategy", "measurement framework"] },
+  { id: "actionable_insights", label: "actionable insights", terms: ["actionable insight", "business insights", "data insights"] },
+
+  // Collaboration, execution, and leadership
+  { id: "cross_functional", label: "cross-functional", terms: ["cross-functional"] },
+  { id: "stakeholder_management", label: "stakeholder management", terms: ["stakeholder management", "stakeholder engagement"] },
+  { id: "stakeholder_alignment", label: "stakeholder alignment", terms: ["stakeholder alignment", "stakeholder buy-in"] },
+  { id: "cross_functional_leadership", label: "cross-functional leadership", terms: ["cross-functional leadership", "cross functional leadership", "lead cross-functional teams", "leading cross-functional teams"] },
+  { id: "influence_without_authority", label: "influence without authority", terms: ["influence without authority", "lead through influence", "leading through influence"] },
+  { id: "consensus_building", label: "consensus building", terms: ["consensus building", "drive consensus"] },
+  { id: "executive_communication", label: "executive communication", terms: ["executive communication", "communicate with executives", "executive-facing communication"] },
+  { id: "senior_leadership", label: "senior leadership", terms: ["senior leadership", "executive leadership", "c-suite", "c-level executives", "senior executives"] },
+  { id: "presentations", label: "presentation", terms: ["presentation"] },
+  { id: "program_management", label: "program management", terms: ["program management", "programme management", "program delivery", "programme delivery"] },
+  { id: "project_management", label: "project management", terms: ["project management", "project delivery"] },
+  { id: "end_to_end_ownership", label: "end-to-end ownership", terms: ["end-to-end ownership", "end to end ownership", "own end to end", "full lifecycle ownership"] },
+  { id: "execution", label: "execution", terms: ["execution", "strategic execution", "operational execution"] },
+  { id: "change_management", label: "change management", terms: ["change management", "organizational change", "organisational change"] },
+  { id: "risk_management", label: "risk management", terms: ["risk management", "risk mitigation"] },
+  { id: "dependency_management", label: "dependency management", terms: ["dependency management", "cross-team dependencies"] },
+  { id: "milestones", label: "milestones", terms: ["milestone", "project milestones", "delivery milestones"] },
+  { id: "process_improvement", label: "process improvement", terms: ["process improvement", "process optimization", "process optimisation"] },
+  { id: "operational_excellence", label: "operational excellence", terms: ["operational excellence", "operational efficiency"] },
+  { id: "scaling", label: "scaling", terms: ["scaling"] },
+  { id: "agile", label: "agile", terms: ["agile", "agile development", "agile methodology"] },
+  { id: "scrum", label: "Scrum", terms: ["scrum", "sprint planning", "sprint execution"] },
+  { id: "team_leadership", label: "team leadership", terms: ["team leadership", "lead teams", "people leadership"] },
+  { id: "people_management", label: "people management", terms: ["people management", "direct reports"] },
+  { id: "coaching", label: "coaching", terms: ["coaching", "mentoring", "talent development"] },
+  { id: "negotiation", label: "negotiation", terms: ["negotiation", "contract negotiation", "commercial negotiation"] },
+  { id: "ambiguity", label: "ambiguity", terms: ["ambiguity", "ambiguous environment", "navigate ambiguity"] },
+  { id: "problem_solving", label: "problem solving", terms: ["problem solving", "problem-solving", "structured problem solving"] },
+  { id: "communication_skills", label: "communication skills", terms: ["written communication", "verbal communication", "oral communication", "written and oral communication"] },
+  { id: "working_backwards", label: "working backwards", terms: ["working backward", "work backward"] },
+  { id: "pr_faq", label: "PR/FAQ", terms: ["pr/faq", "pr-faq", "press release and frequently asked questions"] },
+
+  // Technical product management
+  { id: "technical_product_management", label: "technical product management", terms: ["technical product management", "technical pm"] },
+  { id: "technical_architecture", label: "technical architecture", terms: ["technical architecture", "system architecture", "solution architecture"] },
+  { id: "technical_constraints", label: "technical constraints", terms: ["technical constraint", "system constraints", "architecture constraints"] },
+  { id: "technical_requirements", label: "technical requirements", terms: ["technical requirement", "engineering requirements"] },
+  { id: "technical_specifications", label: "technical specifications", terms: ["technical specification", "technical spec"] },
+  { id: "apis", label: "APIs", terms: ["api", "application programming interface"] },
+  { id: "integrations", label: "integrations", terms: ["integration", "systems integration", "system integration"] },
+  { id: "platform", label: "platform", terms: ["platform product", "platform strategy"] },
+  { id: "infrastructure", label: "infrastructure", terms: ["infrastructure", "technical infrastructure"] },
+  { id: "cloud", label: "cloud", terms: ["cloud", "cloud platform", "cloud services", "cloud computing"] },
+  { id: "saas", label: "SaaS", terms: ["saas", "software as a service"] },
+  { id: "enterprise_software", label: "enterprise software", terms: ["enterprise software", "enterprise product", "b2b software"] },
+  { id: "sdlc", label: "software development lifecycle", terms: ["software development lifecycle", "software development life cycle", "sdlc"] },
+  { id: "developer_experience", label: "developer experience", terms: ["developer experience", "developer productivity", "devex", "dx"] },
+  { id: "data_products", label: "data products", terms: ["data product", "analytics product"] },
+  { id: "data_platform", label: "data platform", terms: ["data platform", "data infrastructure"] },
+  { id: "ai_ml", label: "AI/ML", terms: ["ai/ml", "artificial intelligence", "machine learning"] },
+  { id: "generative_ai", label: "generative AI", terms: ["generative ai", "genai", "foundation model"] },
+  { id: "large_language_models", label: "large language models", terms: ["large language model", "llm"] },
+  { id: "security", label: "security", terms: ["security", "product security", "information security", "cybersecurity"] },
+  { id: "privacy", label: "privacy", terms: ["privacy", "data privacy", "privacy requirements"] },
+  { id: "compliance", label: "compliance", terms: ["compliance", "compliance requirements", "regulatory compliance"] },
+  { id: "reliability", label: "reliability", terms: ["reliability", "system reliability", "availability", "high availability"] },
+  { id: "scalability", label: "scalability", terms: ["scalability", "scalable architecture", "scale systems", "scalable systems"] },
+  { id: "system_performance", label: "system performance", terms: ["system performance", "latency", "throughput"] },
+  { id: "technical_debt", label: "technical debt", terms: ["technical debt", "engineering debt"] },
+  { id: "engineering_collaboration", label: "engineering collaboration", terms: ["engineering collaboration", "partner with engineering", "partnering with engineering", "collaborate with engineering"] },
+  { id: "architecture_tradeoffs", label: "architecture trade-offs", terms: ["architecture trade-off", "architectural trade-off"] },
+
+  // Regulation, governance, safety, and common technology domains
+  { id: "regulatory", label: "regulatory", terms: ["regulatory", "regulation", "regulated"] },
+  { id: "regulatory_environment", label: "regulatory environment", terms: ["regulatory environment", "regulatory landscape", "regulatory context"] },
+  { id: "regulatory_agencies", label: "regulatory agencies", terms: ["regulatory agency", "regulators", "government agencies"] },
+  { id: "policy", label: "policy", terms: ["policy", "product policy", "public policy"] },
+  { id: "governance", label: "governance", terms: ["governance", "product governance", "data governance", "ai governance"] },
+  { id: "legal", label: "legal", terms: ["legal", "legal requirements", "legal review", "legal constraints"] },
+  { id: "trust_safety", label: "trust and safety", terms: ["trust and safety", "trust & safety", "t&s"] },
+  { id: "content_moderation", label: "content moderation", terms: ["content moderation", "content policy", "moderation systems"] },
+  { id: "fraud_prevention", label: "fraud prevention", terms: ["fraud prevention", "fraud detection", "anti-fraud", "fraud risk"] },
+  { id: "risk_controls", label: "risk controls", terms: ["risk control", "control framework", "controls framework"] },
+  { id: "responsible_ai", label: "responsible AI", terms: ["responsible ai", "ethical ai", "ai ethics", "ai safety"] },
+  { id: "healthcare", label: "healthcare", terms: ["healthcare", "health care", "healthtech", "digital health"] },
+  { id: "hipaa", label: "HIPAA", terms: ["hipaa", "health insurance portability and accountability act"] },
+  { id: "fintech", label: "fintech", terms: ["fintech", "financial technology", "financial services"] },
+  { id: "payments", label: "payments", terms: ["payment", "payment processing", "payment systems"] },
+  { id: "ecommerce", label: "e-commerce", terms: ["e-commerce", "ecommerce", "digital commerce", "online commerce"] },
+  { id: "marketplace", label: "marketplace", terms: ["marketplace", "two-sided marketplace", "multi-sided marketplace"] },
+  { id: "advertising", label: "advertising", terms: ["advertising", "advertisement", "ads", "adtech", "advertising technology"] },
+  { id: "retail", label: "retail", terms: ["retail", "retail technology", "retail tech"] },
+  { id: "supply_chain", label: "supply chain", terms: ["supply chain", "supply-chain", "supply chain management"] },
+  { id: "logistics", label: "logistics", terms: ["logistics", "fulfillment", "fulfilment", "last-mile delivery", "last mile delivery"] },
+  { id: "procurement", label: "procurement", terms: ["procurement", "strategic sourcing", "vendor sourcing"] },
+  { id: "vendor_management", label: "vendor management", terms: ["vendor management", "supplier management", "manage vendors", "third-party management"] },
+  { id: "gaming", label: "gaming", terms: ["gaming", "video games", "game development"] },
+  { id: "media_entertainment", label: "media and entertainment", terms: ["media and entertainment", "digital media", "streaming media"] },
+  { id: "subscriptions", label: "subscriptions", terms: ["subscription", "subscription business", "subscription model"] },
+  { id: "b2b", label: "B2B", terms: ["b2b", "business-to-business", "business to business"] },
+  { id: "b2c", label: "B2C", terms: ["b2c", "business-to-consumer", "business to consumer", "consumer product"] },
+  { id: "international_markets", label: "international markets", terms: ["international market", "global markets", "international growth"] },
+];
+
+/** Flat, de-duplicated list for a one-pass, longest-term-first scanner. */
+export const KEYWORD_TERMS: readonly string[] = Array.from(
+  new Set(KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.map((term) => term.toLowerCase()))),
+).sort((left, right) => right.length - left.length || left.localeCompare(right));
+
+/** Lookup from an extracted surface term to its stable concept. */
+export const KEYWORD_CONCEPT_BY_TERM: ReadonlyMap<string, KeywordConcept> = new Map(
+  KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.map((term) => [term.toLowerCase(), concept] as const)),
+);
+
+/**
+ * Resolve a JD or resume surface expression through the single maintained lexicon.
+ * Callers should run morphological matching first. If two expressions resolve to
+ * the same concept but are not morphological variants, they are a yellow match.
+ */
+export function findKeywordConcept(surfaceText: string): KeywordConcept | undefined {
+  return KEYWORD_CONCEPT_BY_TERM.get(surfaceText.trim().toLowerCase());
+}
+
+export function shareKeywordConcept(left: string, right: string): boolean {
+  const leftConcept = findKeywordConcept(left);
+  const rightConcept = findKeywordConcept(right);
+  return Boolean(leftConcept && rightConcept && leftConcept.id === rightConcept.id);
+}
+

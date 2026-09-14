@@ -116,6 +116,20 @@ Replace the filename with the pending migration and `DB` with your D1 binding na
 - `npm run start`: preview the built Worker locally with D1/R2 support
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Local Word rendering
+
+For exact page-count validation on Windows, use the installed Microsoft Word engine. This is the acceptance check for resumes whose layout must remain identical to the source document:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify_docx_with_word.ps1 -InputPath 'D:\path\to\resume.docx'
+```
+
+Add `-PdfPath "$env:TEMP\resume-preview.pdf"` when a PDF preview is also needed. The script opens the document read-only and never saves changes back to the original file.
+
+## Open the app on Windows
+
+Double-click `start-resume-match.cmd`. It starts the local server and opens `http://localhost:5173/` in the default browser. Keep the command window open while using the app; press Ctrl+C in that window to stop it.
+
 When using the Sites plugin, follow its skill instructions for installation, builds, and publishing. These npm commands remain available for standalone use.
 
 The portable build runs Vinext directly without a host `timeout` command. The managed-linux build uses `scripts/build-verified.sh` and its existing `SITES_BUILD_TIMEOUT` setting.
