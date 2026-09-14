@@ -41,7 +41,7 @@ export function upgradeCurrentLexicon(stored: CurrentLexicon): CurrentLexicon {
   const nextBaseIds = new Set(nextBase.map((concept) => concept.id));
   for (const [id, concept] of merged) {
     if (nextBaseIds.has(id)) continue;
-    const learnedTerms = concept.terms.filter((term) => term.source === "manual" && isUsefulKeywordCandidate(term.value));
+    const learnedTerms = concept.terms.filter((term) => term.source === "manual");
     if (learnedTerms.length) concept.terms = learnedTerms;
     else merged.delete(id);
   }
@@ -50,7 +50,7 @@ export function upgradeCurrentLexicon(stored: CurrentLexicon): CurrentLexicon {
     if (!existing) merged.set(base.id, base);
     else {
       existing.label = base.label;
-      existing.terms = dedupeTerms([...base.terms, ...existing.terms.filter((term) => term.source === "manual" && isUsefulKeywordCandidate(term.value))]);
+      existing.terms = dedupeTerms([...base.terms, ...existing.terms.filter((term) => term.source === "manual")]);
     }
   }
   return { baseVersion: KEYWORD_LEXICON_VERSION, revision: stored.revision + 1, updatedAt: new Date().toISOString(), concepts: Array.from(merged.values()) };
@@ -123,7 +123,7 @@ function evidenceFor(text: string, start: number, end: number) {
   return text.slice(sentenceStart + 1, sentenceEnd).trim();
 }
 
-export function matchConceptToResume(label: string, concept: CurrentKeywordConcept, resumeLines: readonly string[]): Omit<LocalKeywordMatch, "conceptId" | "label" | "evidence"> {
+export function matchConceptToResume(label: string, concept: CurrentKeywordConcept, resumeLines: readonly string[]): Omit<LocalKeywordMatch, "conceptId" | "label" | "evidence" | "source"> {
   for (const line of resumeLines) {
     const match = findSurfaceMatch(line, label);
     if (match) return { status: "green", resumeMatch: match };
@@ -141,7 +141,7 @@ export function matchConceptToResume(label: string, concept: CurrentKeywordConce
 export function scanKnownKeywords(jd: string, resumeLines: readonly string[], lexicon: CurrentLexicon): LocalKeywordMatch[] {
   const candidates = lexicon.concepts.flatMap((concept) => concept.terms.flatMap(({ value, source }) => {
     const matches = Array.from(jd.matchAll(surfacePattern(value, true)));
-    const match = matches.find((candidate) => isUsefulKeywordCandidate(candidate[0], evidenceFor(jd, candidate.index, candidate.index + candidate[0].length)));
+    const match = matches.find((candidate) => source === "manual" || isUsefulKeywordCandidate(candidate[0], evidenceFor(jd, candidate.index, candidate.index + candidate[0].length)));
     if (!match) return [];
     const evidence = evidenceFor(jd, match.index, match.index + match[0].length);
     return [{ concept, source, sourceText: match[0], start: match.index, end: match.index + match[0].length, evidence }];

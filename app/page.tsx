@@ -19,6 +19,7 @@ import { isUsefulKeywordCandidate } from "@/lib/keyword-quality";
 
 type KeywordStatus = "green" | "yellow" | "red" | "ignored";
 type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; rationale?: string; originalChars?: number; newChars?: number; maxChars?: number };
+type RewriteApiData = { suggestions?: Array<Omit<RewriteSuggestion, "target">>; needsMoreEvidence?: boolean; question?: string | null; error?: string };
 type YellowEdit = { targetIndex: number; phraseBefore: string; phraseAfter: string; beforeText: string; afterText: string; guidance: string; originalChars: number; newChars: number; maxChars: number };
 type Keyword = {
   id: string;
@@ -138,7 +139,8 @@ function projectCoverage(project: ApplicationProject) {
 function normalizeStoredKeywords(keywords: Keyword[]) {
   const seen = new Set<string>();
   return keywords.flatMap((keyword) => {
-    if (!isUsefulKeywordCandidate(keyword.label, keyword.evidence || "")) return [];
+    if (keyword.source === "llm") return [];
+    if (keyword.source !== "manual" && !isUsefulKeywordCandidate(keyword.label, keyword.evidence || "")) return [];
     if (/\b(bachelor(?:'s)?|master(?:'s)?|degree|university|college|mba|phd|years? of experience|minimum qualifications?|preferred qualifications?)\b/i.test(keyword.label)) return [];
     const expanded = /product strateg(?:y|ies).*(?:senior leadership|senior leaders)/i.test(keyword.label)
       ? [{ ...keyword, label: "product strategy" }, { ...keyword, id: `${keyword.id}-leadership`, label: "presenting to senior leadership" }]
@@ -225,11 +227,11 @@ function relevantResumeLines(texts: string[], keyword: string) {
 
 function replaceParagraphText(paragraph: HTMLElement, text: string) {
   const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
+  const nodes: Array<Node & { data: string }> = [];
   let node: Node | null;
-  while ((node = walker.nextNode())) nodes.push(node as Text);
+  while ((node = walker.nextNode())) nodes.push(node as Node & { data: string });
   if (!nodes.length) {
-    paragraph.append(document.createTextNode(text));
+    paragraph.appendChild(document.createTextNode(text));
     return;
   }
   const original = nodes.map((textNode) => textNode.data).join("");
@@ -417,8 +419,7 @@ function PlacementToggle({ placement, original, onChange }: { placement: "augmen
 }
 
 function KeywordMark({ keyword, selected, onClick, sourceText }: { keyword: Keyword; selected: boolean; onClick: (event: MouseEvent<HTMLButtonElement>) => void; sourceText?: string }) {
-  const sourceLabel = keyword.source === "base" ? "基础词表" : keyword.source === "manual" ? "手动添加" : keyword.source === "llm" ? "AI 补充" : "来源待更新";
-  return <button type="button" data-keyword-id={keyword.id} onClick={onClick} className={`keyword keyword-${keyword.status} ${selected ? "is-selected" : ""}`} title={`${keyword.label} · ${statusLabel[keyword.status]} · ${sourceLabel}`}>{sourceText || keyword.label}</button>;
+  return <button type="button" data-keyword-id={keyword.id} onClick={onClick} className={`keyword keyword-${keyword.status} ${selected ? "is-selected" : ""}`} title={`${keyword.label} · ${statusLabel[keyword.status]}`}>{sourceText || keyword.label}</button>;
 }
 
 function keywordSourcePattern(label: string) {
@@ -488,6 +489,8 @@ export default function Home() {
   const undoStackRef = useRef<Array<{ texts: string[]; keywords: Keyword[] }>>([]);
   const redoStackRef = useRef<Array<{ texts: string[]; keywords: Keyword[] }>>([]);
   const lastManualEditRef = useRef(0);
+  const rewriteRequestsRef = useRef(new Map<string, Promise<RewriteApiData>>());
+  const rewritePrefetchRunRef = useRef(0);
   const [resumeRenderRevision, setResumeRenderRevision] = useState(0);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -580,6 +583,13 @@ export default function Home() {
     if (!lexiconStoreReady) return;
     saveCurrentLexicon(window.localStorage, currentLexicon);
   }, [currentLexicon, lexiconStoreReady]);
+
+  useEffect(() => {
+    if (!projectReady || !aiConnected || !apiKey || !aiModel) return;
+    prefetchRedRewrites(keywords, jdText, resumeTexts);
+    // Starting or switching the configured model should prepare missing rewrites once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId, aiConnected, aiModel, aiProvider, apiKey, projectReady]);
 
   useEffect(() => {
     if (!projectStoreReady || !projectReady || !activeProjectId) return;
@@ -767,35 +777,50 @@ export default function Home() {
     setConnectedProviders((items) => items.filter((item) => item !== aiProvider));
     showNotice(`已清除 ${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 的 API Key`);
   }
-  async function analyzeKeywordsWithAI(content: string, focusTerms: string[] = [], lockedKeywords: string[] = [], lines: string[] = resumeTexts, knownKeywords: Array<{ label: string; conceptId?: string }> = []) {
-    if (!requireAI()) throw new Error("请先配置 AI");
-    const response = await fetch("/api/llm/analyze", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-llm-api-key": apiKey },
-      body: JSON.stringify({
-        provider: aiProvider, customBaseUrl, model: aiModel, jd: content, resumeLines: lines, focusTerms, lockedKeywords, knownKeywords,
-        conceptCatalog: currentLexicon.concepts.map((concept) => ({ id: concept.id, label: concept.label, terms: concept.terms.map((term) => term.value) })),
-      }),
-    });
-    const data = await response.json() as { keywords?: Array<Omit<Keyword, "id" | "previousStatus" | "resumeMatch" | "suggestion" | "yellowEdit" | "rewrites"> & { conceptLabel?: string; aliases?: string[]; resumeMatch?: string | null; suggestion?: string | null; yellowEdit?: YellowEdit | null; rewrites?: Array<{ targetIndex: number; title: string; text: string; rationale: string; originalChars?: number; newChars?: number; maxChars?: number }> }>; error?: string };
-    if (!response.ok || !data.keywords?.length) throw new Error(data.error || "模型没有返回关键词结果");
-    return data.keywords.map((item, index): Keyword => ({
-      id: `ai-${Date.now()}-${index}`,
-      conceptId: item.conceptId,
-      label: item.label,
-      status: item.status,
-      resumeMatch: item.resumeMatch || undefined,
-      suggestion: item.suggestion || undefined,
-      guidance: item.guidance || undefined,
-      category: item.category,
-      yellowEdit: item.yellowEdit || undefined,
-      evidence: item.evidence,
-      importance: item.importance,
-      rewrites: (item.rewrites || []).map((rewrite) => ({ ...rewrite, target: `第${rewrite.targetIndex + 1}条经历` })),
-      needsMoreEvidence: item.needsMoreEvidence,
-      question: item.question || undefined,
-      aliases: item.aliases || [],
-    }));
+  function fetchRewriteData(keyword: Keyword, candidates: Array<{ text: string; index: number }>, sourceJd: string, material = "", placement: "augment" | "replace" = "augment") {
+    const reusable = !material && placement === "augment";
+    const existing = reusable ? rewriteRequestsRef.current.get(keyword.id) : undefined;
+    if (existing) return existing;
+    const request = (async (): Promise<RewriteApiData> => {
+      const response = await fetch("/api/llm/rewrite", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-llm-api-key": apiKey },
+        body: JSON.stringify({ provider: aiProvider, customBaseUrl, model: aiModel, keyword: keyword.label, jd: sourceJd, candidates, material, placement }),
+      });
+      const data = await response.json() as RewriteApiData;
+      if (!response.ok) throw new Error(data.error || "模型改写失败");
+      return data;
+    })();
+    if (reusable) {
+      rewriteRequestsRef.current.set(keyword.id, request);
+      void request.finally(() => rewriteRequestsRef.current.delete(keyword.id)).catch(() => {});
+    }
+    return request;
+  }
+  function storeRewriteResult(keyword: Keyword, data: RewriteApiData) {
+    const suggestions = (data.suggestions || []).map((item) => ({ ...item, target: `第${item.targetIndex + 1}条经历` }));
+    setKeywords((items) => items.map((item) => item.id === keyword.id ? { ...item, rewrites: suggestions, needsMoreEvidence: Boolean(data.needsMoreEvidence) || suggestions.length === 0, question: data.question || undefined } : item));
+    return suggestions;
+  }
+  function prefetchRedRewrites(items: Keyword[], sourceJd: string, sourceLines: string[]) {
+    const runId = ++rewritePrefetchRunRef.current;
+    if (!apiKey || !aiModel) return;
+    const queue = items.filter((item) => item.status === "red" && !item.rewrites?.length);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && rewritePrefetchRunRef.current === runId) {
+        const keyword = queue[cursor++];
+        const candidates = relevantResumeLines(sourceLines, keyword.label).map(({ text, index }) => ({ text, index }));
+        if (!candidates.length) continue;
+        try {
+          const data = await fetchRewriteData(keyword, candidates, sourceJd);
+          if (rewritePrefetchRunRef.current === runId) storeRewriteResult(keyword, data);
+        } catch {
+          // Background prefetch is best-effort; opening the keyword can retry visibly.
+        }
+      }
+    };
+    void Promise.all([worker(), worker()]);
   }
   async function requestRewrite(keyword: Keyword, candidates: Array<{ text: string; index: number }>, material = "", placement: "augment" | "replace" = "augment") {
     if (!requireAI()) return;
@@ -803,16 +828,9 @@ export default function Home() {
     setRewriteQuestion("");
     setGeneratedSuggestions(null);
     try {
-      const response = await fetch("/api/llm/rewrite", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-llm-api-key": apiKey },
-        body: JSON.stringify({ provider: aiProvider, customBaseUrl, model: aiModel, keyword: keyword.label, jd: jdText, candidates, material, placement }),
-      });
-      const data = await response.json() as { suggestions?: Array<{ targetIndex: number; title: string; text: string; rationale: string; originalChars?: number; newChars?: number; maxChars?: number }>; needsMoreEvidence?: boolean; question?: string | null; error?: string };
-      if (!response.ok) throw new Error(data.error || "模型改写失败");
-      const suggestions = (data.suggestions || []).map((item) => ({ ...item, target: `第${item.targetIndex + 1}条经历` }));
+      const data = await fetchRewriteData(keyword, candidates, jdText, material, placement);
+      const suggestions = storeRewriteResult(keyword, data);
       setGeneratedSuggestions(suggestions);
-      setKeywords((items) => items.map((item) => item.id === keyword.id ? { ...item, rewrites: suggestions, needsMoreEvidence: Boolean(data.needsMoreEvidence) || suggestions.length === 0, question: data.question || undefined } : item));
       setRewriteQuestion(data.question || (data.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充一段真实经历。" : ""));
       setRedMode("choices");
       if (suggestions.length) showNotice(`模型已生成 ${suggestions.length} 条针对性建议`);
@@ -828,7 +846,7 @@ export default function Home() {
     const candidates = relevantResumeLines(resumeTexts, keyword.label).map(({ text, index }) => ({ text, index }));
     setRedTarget(candidates[0]?.index ?? 0);
     setGeneratedSuggestions(keyword.rewrites || []);
-    setRewriteQuestion(keyword.question || (!keyword.rewrites ? "这个项目还没有预生成改写方案，请点击“深度扫描”更新分析。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
+    setRewriteQuestion(keyword.question || (!keyword.rewrites ? "正在生成改写建议，请稍候。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
     setRedMode("choices");
     setRedDialogOpen(true);
     if (candidates.length && !keyword.rewrites?.length) {
@@ -866,6 +884,8 @@ export default function Home() {
   }
   function startNewProject(resumeId = activeResumeId) {
     clearEditHistory();
+    rewritePrefetchRunRef.current += 1;
+    rewriteRequestsRef.current.clear();
     const resume = resumes.find((item) => item.id === resumeId) ?? resumes[0];
     const nextResumeId = resume?.id || "";
     setActiveProjectId("");
@@ -890,6 +910,8 @@ export default function Home() {
   }
   function openProject(project: ApplicationProject) {
     clearEditHistory();
+    rewritePrefetchRunRef.current += 1;
+    rewriteRequestsRef.current.clear();
     setActiveProjectId(project.id);
     setActiveResumeId(project.resumeId);
     setResumeTexts([...project.resumeTexts]);
@@ -910,6 +932,7 @@ export default function Home() {
     setFinalCheckPassed(false);
     setProjectReady(true);
     setView("workspace");
+    prefetchRedRewrites(normalizedKeywords, project.jdText, project.resumeTexts);
   }
   function useResume(id: string) {
     startNewProject(id);
@@ -1002,52 +1025,10 @@ export default function Home() {
     if (!fits) showNotice("这条修改会增加 Word 实际行数，已取消应用；请先压缩措辞");
     return fits;
   }
-  async function runInitialKeywordScan(content: string, lines: string[]) {
-    const localMatches = scanKnownKeywords(content, lines, currentLexicon);
-    const localKeywords = localMatches.map(keywordFromLocalMatch);
-    const aiKeywords = await analyzeKeywordsWithAI(content, [], [], lines, localKeywords.map((keyword) => ({ label: keyword.label, conceptId: keyword.conceptId })));
-    const usedAiIds = new Set<string>();
-    const combined = localKeywords.map((localKeyword) => {
-      let effectiveKeyword = localKeyword;
-      const aiKeyword = aiKeywords.find((candidate) => {
-        if (usedAiIds.has(candidate.id)) return false;
-        return sameSurfaceFamily(localKeyword.label, candidate.label);
-      });
-      if (aiKeyword) {
-        usedAiIds.add(aiKeyword.id);
-        if (aiKeyword.conceptId && aiKeyword.conceptId !== localKeyword.conceptId) effectiveKeyword = { ...localKeyword, conceptId: aiKeyword.conceptId };
-      }
-      if (!aiKeyword || effectiveKeyword.status !== "red") return effectiveKeyword;
-      return {
-        ...effectiveKeyword,
-        rewrites: aiKeyword.rewrites,
-        needsMoreEvidence: aiKeyword.needsMoreEvidence,
-        question: aiKeyword.question,
-        category: aiKeyword.category,
-        importance: aiKeyword.importance,
-      };
-    });
-
-    for (const aiKeyword of aiKeywords.filter((candidate) => !usedAiIds.has(candidate.id))) {
-      const learnedConcept = currentLexicon.concepts.find((concept) => concept.id === aiKeyword.conceptId) || { id: `session_${aiKeyword.id}`, label: aiKeyword.label, terms: [{ value: aiKeyword.label, source: "llm" as const }] };
-      const localMatch = matchConceptToResume(aiKeyword.label, learnedConcept, lines);
-      combined.push({
-        ...aiKeyword,
-        id: `ai-result-${learnedConcept.id}-${combined.length}`,
-        conceptId: learnedConcept.id,
-        source: "llm",
-        status: localMatch.status,
-        resumeMatch: localMatch.resumeMatch,
-        suggestion: localMatch.suggestion,
-        aliases: aiKeyword.aliases || [],
-        rewrites: localMatch.status === "red" ? aiKeyword.rewrites : [],
-        needsMoreEvidence: localMatch.status === "red" ? aiKeyword.needsMoreEvidence : false,
-      });
-    }
-    return normalizeStoredKeywords(combined);
+  function runInitialKeywordScan(content: string, lines: string[]) {
+    return normalizeStoredKeywords(scanKnownKeywords(content, lines, currentLexicon).map(keywordFromLocalMatch));
   }
   async function createProject() {
-    if (!requireAI()) return;
     setProjectLoading(true);
     try {
       let content = jdText.trim();
@@ -1070,7 +1051,7 @@ export default function Home() {
       setJobTitle(extractedTitle);
       setProjectName(generatedName);
       setProjectNameDraft(generatedName);
-      const nextKeywords = await runInitialKeywordScan(content, resumeTexts);
+      const nextKeywords = runInitialKeywordScan(content, resumeTexts);
       setKeywords(nextKeywords);
       setSelectedId(nextKeywords[0]?.id || "");
       setKeywordReviewStarted(false);
@@ -1092,7 +1073,8 @@ export default function Home() {
       setProjects((items) => [project, ...items]);
       setActiveProjectId(projectId);
       setProjectReady(true);
-      showNotice(`已使用 ${activeProviderInfo.shortLabel} · ${aiModel} 完成关键词匹配`);
+      prefetchRedRewrites(nextKeywords, content, resumeTexts);
+      showNotice(`已在本地识别 ${nextKeywords.length} 个关键词`);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "建立项目失败，请稍后重试");
     } finally {
@@ -1202,7 +1184,7 @@ export default function Home() {
     const concept = existingConcept || nextLexicon.concepts.find((candidate) => candidate.id === addition?.conceptId)!;
     if (addition) setCurrentLexicon(nextLexicon);
     const match = matchConceptToResume(text, concept, resumeTexts);
-    setKeywords((items) => items.some((item) => item.conceptId === concept.id || item.label.toLowerCase() === text.toLowerCase()) ? items : [...items, keywordFromLocalMatch({ conceptId: concept.id, label: text, evidence: text, ...match }, items.length)]);
+    setKeywords((items) => items.some((item) => item.conceptId === concept.id || item.label.toLowerCase() === text.toLowerCase()) ? items : [...items, keywordFromLocalMatch({ conceptId: concept.id, label: text, evidence: text, source: "manual", ...match }, items.length)]);
     if (!manualTerms.includes(text)) setManualTerms((terms) => [...terms, text]);
     showNotice(existingConcept ? `已加入项目：${text}` : `已加入项目并写入当前词库：${text}`);
     window.getSelection()?.removeAllRanges();
@@ -1218,6 +1200,7 @@ export default function Home() {
     setManualTerms([]);
     setFinalCheckPassed(false);
     setScanBusy(false);
+    prefetchRedRewrites(nextKeywords, jdText, resumeTexts);
     showNotice(`已在本地重新匹配 ${nextKeywords.length} 个固定关键词，未调用模型`);
   }
   function resetResumeAndRescan() {
@@ -1235,6 +1218,7 @@ export default function Home() {
     setRedDialogOpen(false);
     setFinalCheckPassed(false);
     setScanBusy(false);
+    prefetchRedRewrites(nextKeywords, jdText, originalTexts);
     showNotice("已恢复原始简历，并在本地按首次关键词重新匹配");
   }
   async function exportResume() {
@@ -1315,10 +1299,10 @@ export default function Home() {
 
       <Dialog open={aiSettingsOpen} onOpenChange={setAiSettingsOpen}>
         <DialogContent className="ai-settings-dialog sm:max-w-[640px]">
-          <DialogHeader><div className="ai-settings-icon"><KeyRound /></div><DialogTitle>模型服务设置</DialogTitle><DialogDescription>分别添加各家 API Key，并选择当前用于关键词分析和简历改写的模型。</DialogDescription></DialogHeader>
+          <DialogHeader><div className="ai-settings-icon"><KeyRound /></div><DialogTitle>模型服务设置</DialogTitle><DialogDescription>模型仅用于生成简历改写建议。关键词识别完全在本地完成，不会发送给模型处理。</DialogDescription></DialogHeader>
           <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
           <div className="ai-settings-form">
-            <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>密钥和模型只用于当前选中的服务商</span></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
+            <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会在本地扫描完成时后台准备红色关键词的改写建议</span></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
             {aiProvider === "custom" && <label><span>API Base URL</span><input type="url" value={customBaseUrl} onChange={(event) => { setCustomBaseUrl(event.target.value); setAiConnected(false); window.localStorage.setItem("resume-match-ai-custom-base-url-v1", event.target.value); }} placeholder="https://provider.example.com/v1" /><small>仅支持公开的 HTTPS 地址，并按 OpenAI Chat Completions 格式调用；本机和内网地址会被拒绝。</small></label>}
             <label><span>{activeProviderInfo.shortLabel} API Key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAiConnected(false); setConnectedProviders((items) => items.filter((item) => item !== aiProvider)); }} placeholder={activeProviderInfo.keyHint} /><small>{activeProviderInfo.keyUrl ? <>还没有密钥？前往 <a href={activeProviderInfo.keyUrl} target="_blank" rel="noreferrer">{activeProviderInfo.label} 控制台</a> 创建。各家的 API 账户和费用相互独立。</> : "请使用兼容服务商发放的 API Key。"}</small></label>
             <div className="ai-key-actions"><Button onClick={() => void connectAI()} disabled={aiConnecting || !apiKey.trim() || (aiProvider === "custom" && !customBaseUrl.trim())}>{aiConnecting ? <LoaderCircle className="animate-spin" /> : <KeyRound />}{aiConnecting ? "正在连接…" : "验证密钥并读取模型"}</Button>{apiKey && <Button variant="outline" onClick={clearAIKey}>清除这家密钥</Button>}</div>

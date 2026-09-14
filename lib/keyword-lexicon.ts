@@ -17,7 +17,7 @@ export type KeywordConcept = Readonly<{
   terms: readonly string[];
 }>;
 
-export const KEYWORD_LEXICON_VERSION = "1.3.0";
+export const KEYWORD_LEXICON_VERSION = "1.4.0";
 
 export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   // Product management and product strategy

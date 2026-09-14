@@ -26,9 +26,6 @@ const EXCLUDED_CONTEXT_PATTERNS = [
 export function isUsefulKeywordCandidate(label: string, evidence = "") {
   const normalized = label.trim().toLowerCase().replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, " ");
   if (!normalized || GENERIC_LABELS.has(normalized)) return false;
-  if (/^(?:define|build|launch|grow)(?:\s*,?\s*(?:and\s+)?(?:define|build|launch|grow)){2,}$/i.test(normalized)) return false;
-  if (/^(?:software|technical|technology(?:-driven)?)\s+(?:offerings?|services?|organizations?|products?(?:\s+and\s+services?)?)$/i.test(normalized)) return false;
-  if (/^(?:representing|advocating|working|leading|driving|developing|maintaining)\b.*\b(?:customers?|technology|company|organizations?)$/i.test(normalized)) return false;
   if (EXCLUDED_CONTEXT_PATTERNS.some((pattern) => pattern.test(evidence))) return false;
   if (/^payments?$/.test(normalized) && /salary|compensation|sign-on|stock units?|benefits/i.test(evidence)) return false;
   return true;

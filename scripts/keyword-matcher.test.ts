@@ -111,6 +111,17 @@ const polluted = addTermsToCurrentLexicon(base, { label: "software offerings", s
 const cleaned = upgradeCurrentLexicon({ ...polluted, baseVersion: "1.2.0" });
 assert.equal(cleaned.concepts.some((concept) => concept.terms.some((term) => term.source === "llm")), false);
 
+const manuallyChosen = addTermsToCurrentLexicon(base, { label: "hardware", source: "manual" }).lexicon;
+const upgradedManual = upgradeCurrentLexicon({ ...manuallyChosen, baseVersion: "1.3.0" });
+assert.ok(upgradedManual.concepts.some((concept) => concept.terms.some((term) => term.value === "hardware" && term.source === "manual")));
+const manualMatch = scanKnownKeywords(
+  "Hardware experience is preferred.",
+  ["Built hardware prototypes for customer testing."],
+  upgradedManual,
+).find((keyword) => keyword.label.toLowerCase() === "hardware");
+assert.equal(manualMatch?.status, "green");
+assert.equal(manualMatch?.source, "manual");
+
 const memory = new Map<string, string>();
 const storage = { getItem: (key: string) => memory.get(key) || null, setItem: (key: string, value: string) => { memory.set(key, value); } };
 saveCurrentLexicon(storage, learned);
