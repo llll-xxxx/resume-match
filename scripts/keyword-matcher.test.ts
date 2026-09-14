@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import {
   addTermsToCurrentLexicon,
   createCurrentLexicon,
+  findSurfaceMatch,
   isCurrentLexicon,
   sameSurfaceFamily,
   scanKnownKeywords,
   upgradeCurrentLexicon,
 } from "../lib/keyword-matcher";
 import { loadCurrentLexicon, saveCurrentLexicon } from "../lib/keyword-store";
+import { KEYWORD_CONCEPTS } from "../lib/keyword-lexicon";
 
 const base = createCurrentLexicon();
 
@@ -76,6 +78,39 @@ assert.equal(sameSurfaceFamily("product requirement", "product requirements"), t
 assert.equal(sameSurfaceFamily("prioritize", "prioritize features"), false);
 assert.equal(sameSurfaceFamily("product management", "technical product management"), false);
 assert.equal(sameSurfaceFamily("software", "software as a service"), false);
+assert.equal(sameSurfaceFamily("ownership", "p&l ownership"), false);
+assert.equal(sameSurfaceFamily("testing", "a/b testing"), false);
+
+const incompleteSelfMatches = KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.flatMap((term) => {
+  const match = findSurfaceMatch(term, term);
+  return match?.toLowerCase() === term.toLowerCase() ? [] : [`${concept.id}: ${term} -> ${match || "NO MATCH"}`];
+}));
+assert.deepEqual(incompleteSelfMatches, [], `every lexicon term must match itself completely:\n${incompleteSelfMatches.join("\n")}`);
+
+const partialPhraseMatches = KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.flatMap((term) => {
+  const tokens = term.match(/[a-z0-9]+(?:[+#]+|[&/][a-z0-9]+[+#]*)*/gi) || [];
+  if (tokens.length < 2) return [];
+  return tokens.flatMap((_, removedIndex) => {
+    const shortened = tokens.filter((__, index) => index !== removedIndex).join(" ");
+    return findSurfaceMatch(shortened, term) ? [`${concept.id}: ${term} matched shortened text '${shortened}'`] : [];
+  });
+}));
+assert.deepEqual(partialPhraseMatches, [], `a multi-token term must not match after a token is removed:\n${partialPhraseMatches.join("\n")}`);
+
+assert.equal(findSurfaceMatch("This role requires ownership.", "p&l ownership"), null);
+assert.equal(findSurfaceMatch("You will run testing.", "a/b testing"), null);
+assert.equal(findSurfaceMatch("Owned P&L ownership for the portfolio.", "p&l ownership"), "P&L ownership");
+assert.equal(findSurfaceMatch("Ran A/B testing across onboarding flows.", "a/b testing"), "A/B testing");
+assert.equal(findSurfaceMatch("Built 0-to-1 products.", "0-to-1"), "0-to-1");
+
+const symbolicSafety = scanKnownKeywords(
+  "The role requires ownership, testing, safety, FAQ writing, and acquisitions experience.",
+  [],
+  createCurrentLexicon(),
+).map((keyword) => keyword.conceptId);
+for (const conceptId of ["profit_and_loss", "ab_testing", "trust_safety", "pr_faq", "mergers_acquisitions"]) {
+  assert.equal(symbolicSafety.includes(conceptId), false, `partial text must not match ${conceptId}`);
+}
 
 const amazonNoise = scanKnownKeywords(
   `You are part of something big. You'll work with world class tools, global platforms, and experiment and launch solutions.

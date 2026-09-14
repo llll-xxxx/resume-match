@@ -6,8 +6,12 @@ export type CurrentKeywordConcept = { id: string; label: string; terms: CurrentK
 export type CurrentLexicon = { baseVersion: string; revision: number; updatedAt: string; concepts: CurrentKeywordConcept[] };
 export type LocalKeywordMatch = { conceptId: string; label: string; evidence: string; source: KeywordTermSource; status: "green" | "yellow" | "red"; resumeMatch?: string; suggestion?: string };
 
-const STOP_WORDS = new Set(["and", "or", "the", "a", "an", "of", "to", "for", "with", "in", "on", "across", "into"]);
 const cleanTerm = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+const TOKEN_PATTERN = /[a-z0-9]+(?:[+#]+|[&/][a-z0-9]+[+#]*)*/gi;
+
+function surfaceTokens(value: string) {
+  return value.match(TOKEN_PATTERN) || [];
+}
 
 function dedupeTerms(terms: CurrentKeywordTerm[]) {
   const seen = new Set<string>();
@@ -77,28 +81,56 @@ export function relinkLearnedConcept(current: CurrentLexicon, input: { fromConce
 
 export function morphologyStem(value: string) {
   let word = value.toLowerCase();
+  if (word.length <= 3) return word;
   if (/yses$/.test(word)) word = word.replace(/yses$/, "ysis");
   else if (/ies$/.test(word)) word = word.replace(/ies$/, "y");
   else if (/ied$/.test(word)) word = word.replace(/ied$/, "y");
-  word = word.replace(/ically$/, "ic").replace(/ally$/, "al").replace(/ality$/, "al");
-  word = word.replace(/(?:ments?|ness)$/i, "").replace(/(?:ation|ition|tion)$/i, "");
-  word = word.replace(/(?:ing|ed)$/i, "").replace(/(?:es|s)$/i, "");
-  word = word.replace(/al$/i, "");
-  if (word.length > 4) word = word.replace(/e$/i, "");
+  else if (/ically$/.test(word)) word = word.replace(/ically$/, "ic");
+  else if (/ally$/.test(word)) word = word.replace(/ally$/, "al");
+  else if (/ality$/.test(word)) word = word.replace(/ality$/, "al");
+  else if (/(?:ing|ed)$/.test(word)) {
+    word = word.replace(/(?:ing|ed)$/, "");
+    if (/([^aeiou])\1$/.test(word) && !/ss$/.test(word)) word = word.slice(0, -1);
+  } else if (/(?:ches|shes|sses|xes|zes)$/.test(word)) word = word.replace(/es$/, "");
+  else if (/s$/.test(word) && !/(?:ss|us|is|as)$/.test(word)) word = word.slice(0, -1);
   return word;
 }
 
+function alphabeticWordPattern(word: string) {
+  const normalized = word.toLowerCase();
+  const stem = morphologyStem(normalized);
+  const variants = new Set([normalized, stem]);
+  if (/ysis$/.test(stem)) variants.add(stem.replace(/ysis$/, "yses"));
+  else if (/[^aeiou]y$/.test(stem)) {
+    variants.add(stem.replace(/y$/, "ies"));
+    variants.add(stem.replace(/y$/, "ied"));
+  } else if (/e$/.test(stem)) {
+    variants.add(`${stem}s`);
+    variants.add(`${stem}d`);
+    variants.add(`${stem.slice(0, -1)}ing`);
+  } else {
+    variants.add(`${stem}s`);
+    variants.add(`${stem}es`);
+    variants.add(`${stem}ed`);
+    variants.add(`${stem}ing`);
+  }
+  if (/al$/.test(stem)) variants.add(`${stem.slice(0, -2)}ally`);
+  return `(?:${Array.from(variants).sort((left, right) => right.length - left.length).map((variant) => variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`;
+}
+
 export function surfacePattern(value: string, global = false) {
-  const words = (value.match(/[a-z0-9+#]+/gi) || []).filter((word) => word.length > 1 && !STOP_WORDS.has(word.toLowerCase()));
+  const words = surfaceTokens(value);
   if (!words.length) return /$a/g;
-  const separator = "[\\s&/,-]+(?:(?:and|or|the|of|to|for|with|in|on|across|into)[\\s&/,-]+)*";
-  const exactWords = new Set(["ads", "experimentation", "gaming", "legal", "packaging", "positioning", "segmentation"]);
-  const source = `\\b${words.map((word) => {
-    if (exactWords.has(word.toLowerCase())) return word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const stem = morphologyStem(word);
-    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return stem.length <= 3 || /\d/.test(stem) ? escaped : `${escaped}[a-z]*`;
-  }).join(separator)}\\b`;
+  const separator = "[\\s&/,.():-]+";
+  const exactWords = new Set(["ads", "experimentation", "gaming", "legal", "nps", "packaging", "positioning", "saas", "segmentation"]);
+  const source = `(?<![a-z0-9])${words.map((word) => {
+    const normalized = word.toLowerCase();
+    if (/[^a-z0-9]/.test(normalized) || exactWords.has(normalized)) {
+      const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return escaped.replace(/[&/]/g, (symbol) => `\\s*${symbol}\\s*`);
+    }
+    return normalized.length <= 3 || /\d/.test(normalized) ? normalized : alphabeticWordPattern(normalized);
+  }).join(separator)}(?![a-z0-9])`;
   return new RegExp(source, global ? "gi" : "i");
 }
 
@@ -107,9 +139,7 @@ export function findSurfaceMatch(text: string, value: string) {
 }
 
 export function sameSurfaceFamily(left: string, right: string) {
-  const tokens = (value: string) => (value.match(/[a-z0-9+#]+/gi) || [])
-    .filter((word) => word.length > 1 && !STOP_WORDS.has(word.toLowerCase()))
-    .map(morphologyStem);
+  const tokens = (value: string) => surfaceTokens(value).map((token) => /[^a-z]/i.test(token) || token.length <= 3 ? token.toLowerCase() : morphologyStem(token));
   const leftTokens = tokens(left);
   const rightTokens = tokens(right);
   return leftTokens.length > 0 && leftTokens.length === rightTokens.length && leftTokens.every((token, index) => token === rightTokens[index]);
