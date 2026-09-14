@@ -17,7 +17,7 @@ export type KeywordConcept = Readonly<{
   terms: readonly string[];
 }>;
 
-export const KEYWORD_LEXICON_VERSION = "1.4.0";
+export const KEYWORD_LEXICON_VERSION = "1.5.0";
 
 export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   // Product management and product strategy
@@ -254,12 +254,12 @@ export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   { id: "healthcare", label: "healthcare", terms: ["healthcare", "health care", "healthtech", "digital health"] },
   { id: "hipaa", label: "HIPAA", terms: ["hipaa", "health insurance portability and accountability act"] },
   { id: "fintech", label: "fintech", terms: ["fintech", "financial technology", "financial services"] },
-  { id: "payments", label: "payments", terms: ["payment", "payment processing", "payment systems"] },
+  { id: "payments", label: "payments", terms: ["payment processing", "payment systems"] },
   { id: "ecommerce", label: "e-commerce", terms: ["e-commerce", "ecommerce", "digital commerce", "online commerce"] },
   { id: "marketplace", label: "marketplace", terms: ["marketplace", "two-sided marketplace", "multi-sided marketplace"] },
   { id: "advertising", label: "advertising", terms: ["advertising", "advertisement", "ads", "adtech", "advertising technology"] },
   { id: "retail", label: "retail", terms: ["retail", "retail technology", "retail tech"] },
-  { id: "supply_chain", label: "supply chain", terms: ["supply chain", "supply-chain", "supply chain management"] },
+  { id: "supply_chain", label: "supply chain management", terms: ["supply chain management", "supply chain optimization", "supply chain operations"] },
   { id: "logistics", label: "logistics", terms: ["logistics", "fulfillment", "fulfilment", "last-mile delivery", "last mile delivery"] },
   { id: "procurement", label: "procurement", terms: ["procurement", "strategic sourcing", "vendor sourcing"] },
   { id: "vendor_management", label: "vendor management", terms: ["vendor management", "supplier management", "manage vendors", "third-party management"] },

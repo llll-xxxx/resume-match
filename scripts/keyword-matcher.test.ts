@@ -8,7 +8,6 @@ import {
   upgradeCurrentLexicon,
 } from "../lib/keyword-matcher";
 import { loadCurrentLexicon, saveCurrentLexicon } from "../lib/keyword-store";
-import { isUsefulKeywordCandidate } from "../lib/keyword-quality";
 
 const base = createCurrentLexicon();
 
@@ -97,15 +96,6 @@ for (const noise of ["something", "platforms", "experiment", "pmts", "segments",
 }
 assert.ok(amazonLabels.includes("product requirements"));
 assert.ok(amazonLabels.includes("machine learning"));
-
-for (const noise of [
-  "software offerings", "hardware", "technical services", "technical organizations",
-  "business owner", "dive deep into the technology", "technology-driven products",
-  "business stakeholders", "software services", "define, build, launch and grow",
-  "representing and advocating for critical customers", "machine learning applications",
-]) {
-  assert.equal(isUsefulKeywordCandidate(noise), false, `should reject noisy keyword ${noise}`);
-}
 
 const polluted = addTermsToCurrentLexicon(base, { label: "software offerings", source: "llm" }).lexicon;
 const cleaned = upgradeCurrentLexicon({ ...polluted, baseVersion: "1.2.0" });

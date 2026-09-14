@@ -15,7 +15,6 @@ import {
   type CurrentLexicon, type LocalKeywordMatch,
 } from "@/lib/keyword-matcher";
 import { loadCurrentLexicon, saveCurrentLexicon } from "@/lib/keyword-store";
-import { isUsefulKeywordCandidate } from "@/lib/keyword-quality";
 
 type KeywordStatus = "green" | "yellow" | "red" | "ignored";
 type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; rationale?: string; originalChars?: number; newChars?: number; maxChars?: number };
@@ -136,12 +135,13 @@ function projectCoverage(project: ApplicationProject) {
   return Math.round((project.keywords.filter((keyword) => keyword.status === "green").length / project.keywords.length) * 100);
 }
 
-function normalizeStoredKeywords(keywords: Keyword[]) {
+function normalizeStoredKeywords(keywords: Keyword[], lexicon: CurrentLexicon, manualTerms: string[] = []) {
   const seen = new Set<string>();
   return keywords.flatMap((keyword) => {
-    if (keyword.source === "llm") return [];
-    if (keyword.source !== "manual" && !isUsefulKeywordCandidate(keyword.label, keyword.evidence || "")) return [];
-    if (/\b(bachelor(?:'s)?|master(?:'s)?|degree|university|college|mba|phd|years? of experience|minimum qualifications?|preferred qualifications?)\b/i.test(keyword.label)) return [];
+    const manuallySelected = keyword.source === "manual" || manualTerms.some((term) => sameSurfaceFamily(term, keyword.label));
+    const concept = lexicon.concepts.find((candidate) => candidate.id === keyword.conceptId);
+    const knownTerm = concept?.terms.some((term) => sameSurfaceFamily(term.value, keyword.label));
+    if (!manuallySelected && !knownTerm) return [];
     const expanded = /product strateg(?:y|ies).*(?:senior leadership|senior leaders)/i.test(keyword.label)
       ? [{ ...keyword, label: "product strategy" }, { ...keyword, id: `${keyword.id}-leadership`, label: "presenting to senior leadership" }]
       : [keyword];
@@ -538,12 +538,13 @@ export default function Home() {
         setResumeTexts([...parsed[0].texts]);
       }
     }
+    const loadedLexicon = loadCurrentLexicon(window.localStorage);
     const savedProjects = window.localStorage.getItem("resume-match-projects-v1");
     if (savedProjects) {
       const parsed = JSON.parse(savedProjects) as ApplicationProject[];
-      if (Array.isArray(parsed)) setProjects(parsed.map((project) => ({ ...project, keywords: normalizeStoredKeywords(project.keywords || []) })));
+      if (Array.isArray(parsed)) setProjects(parsed.map((project) => ({ ...project, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, project.manualTerms || []) })));
     }
-    setCurrentLexicon(loadCurrentLexicon(window.localStorage));
+    setCurrentLexicon(loadedLexicon);
     const savedProvider = (window.localStorage.getItem("resume-match-ai-provider-v1") || "openai") as ProviderId;
     const normalizedProvider = providerOptions.some((item) => item.id === savedProvider) ? savedProvider : "openai";
     const sessionKey = window.sessionStorage.getItem(`resume-match-ai-key-${normalizedProvider}-v1`) || window.sessionStorage.getItem("resume-match-openai-key-v1") || "";
@@ -921,7 +922,7 @@ export default function Home() {
     setJobTitle(project.jobTitle);
     setProjectName(project.name);
     setProjectNameDraft(project.name);
-    const normalizedKeywords = normalizeStoredKeywords(project.keywords).map((keyword) => ({ ...keyword }));
+    const normalizedKeywords = normalizeStoredKeywords(project.keywords, currentLexicon, project.manualTerms).map((keyword) => ({ ...keyword }));
     setKeywords(normalizedKeywords);
     setSelectedId(normalizedKeywords[0]?.id || "");
     setKeywordReviewStarted(false);
@@ -1026,7 +1027,7 @@ export default function Home() {
     return fits;
   }
   function runInitialKeywordScan(content: string, lines: string[]) {
-    return normalizeStoredKeywords(scanKnownKeywords(content, lines, currentLexicon).map(keywordFromLocalMatch));
+    return normalizeStoredKeywords(scanKnownKeywords(content, lines, currentLexicon).map(keywordFromLocalMatch), currentLexicon);
   }
   async function createProject() {
     setProjectLoading(true);

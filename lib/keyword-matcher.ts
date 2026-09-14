@@ -1,5 +1,4 @@
 import { KEYWORD_CONCEPTS, KEYWORD_LEXICON_VERSION } from "@/lib/keyword-lexicon";
-import { isUsefulKeywordCandidate } from "@/lib/keyword-quality";
 
 export type KeywordTermSource = "base" | "manual" | "llm";
 export type CurrentKeywordTerm = { value: string; source: KeywordTermSource; addedAt?: string };
@@ -98,7 +97,7 @@ export function surfacePattern(value: string, global = false) {
     if (exactWords.has(word.toLowerCase())) return word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const stem = morphologyStem(word);
     const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return stem.length <= 2 || /\d/.test(stem) ? escaped : `${escaped}[a-z]*`;
+    return stem.length <= 3 || /\d/.test(stem) ? escaped : `${escaped}[a-z]*`;
   }).join(separator)}\\b`;
   return new RegExp(source, global ? "gi" : "i");
 }
@@ -140,8 +139,7 @@ export function matchConceptToResume(label: string, concept: CurrentKeywordConce
 
 export function scanKnownKeywords(jd: string, resumeLines: readonly string[], lexicon: CurrentLexicon): LocalKeywordMatch[] {
   const candidates = lexicon.concepts.flatMap((concept) => concept.terms.flatMap(({ value, source }) => {
-    const matches = Array.from(jd.matchAll(surfacePattern(value, true)));
-    const match = matches.find((candidate) => source === "manual" || isUsefulKeywordCandidate(candidate[0], evidenceFor(jd, candidate.index, candidate.index + candidate[0].length)));
+    const match = jd.matchAll(surfacePattern(value, true)).next().value;
     if (!match) return [];
     const evidence = evidenceFor(jd, match.index, match.index + match[0].length);
     return [{ concept, source, sourceText: match[0], start: match.index, end: match.index + match[0].length, evidence }];
