@@ -2,7 +2,14 @@ const GENERIC_LABELS = new Set([
   "ad", "ads", "experience", "experiences", "experiment", "experiments",
   "legally", "ownership", "package", "packages", "platform", "platforms",
   "pmt", "pmts", "position", "positions", "segment", "segments", "business segment", "business segments", "something",
-  "software engineer", "software engineers",
+  "software engineer", "software engineers", "executing", "hardware",
+  "business owner", "business stakeholders", "end-to-end owners",
+  "software offerings", "software offering", "software services",
+  "technical services", "technical organizations", "technology-driven products",
+  "technology-driven product", "technology products and services",
+  "dive deep into the technology", "define, build, launch and grow",
+  "prioritize needs", "scalable business plans", "tactical detailed execution",
+  "representing and advocating for critical customers", "machine learning applications",
 ]);
 
 const EXCLUDED_CONTEXT_PATTERNS = [
@@ -19,6 +26,9 @@ const EXCLUDED_CONTEXT_PATTERNS = [
 export function isUsefulKeywordCandidate(label: string, evidence = "") {
   const normalized = label.trim().toLowerCase().replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, " ");
   if (!normalized || GENERIC_LABELS.has(normalized)) return false;
+  if (/^(?:define|build|launch|grow)(?:\s*,?\s*(?:and\s+)?(?:define|build|launch|grow)){2,}$/i.test(normalized)) return false;
+  if (/^(?:software|technical|technology(?:-driven)?)\s+(?:offerings?|services?|organizations?|products?(?:\s+and\s+services?)?)$/i.test(normalized)) return false;
+  if (/^(?:representing|advocating|working|leading|driving|developing|maintaining)\b.*\b(?:customers?|technology|company|organizations?)$/i.test(normalized)) return false;
   if (EXCLUDED_CONTEXT_PATTERNS.some((pattern) => pattern.test(evidence))) return false;
   if (/^payments?$/.test(normalized) && /salary|compensation|sign-on|stock units?|benefits/i.test(evidence)) return false;
   return true;

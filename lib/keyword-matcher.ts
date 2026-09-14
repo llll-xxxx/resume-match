@@ -5,7 +5,7 @@ export type KeywordTermSource = "base" | "manual" | "llm";
 export type CurrentKeywordTerm = { value: string; source: KeywordTermSource; addedAt?: string };
 export type CurrentKeywordConcept = { id: string; label: string; terms: CurrentKeywordTerm[] };
 export type CurrentLexicon = { baseVersion: string; revision: number; updatedAt: string; concepts: CurrentKeywordConcept[] };
-export type LocalKeywordMatch = { conceptId: string; label: string; evidence: string; status: "green" | "yellow" | "red"; resumeMatch?: string; suggestion?: string };
+export type LocalKeywordMatch = { conceptId: string; label: string; evidence: string; source: KeywordTermSource; status: "green" | "yellow" | "red"; resumeMatch?: string; suggestion?: string };
 
 const STOP_WORDS = new Set(["and", "or", "the", "a", "an", "of", "to", "for", "with", "in", "on", "across", "into"]);
 const cleanTerm = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -41,7 +41,7 @@ export function upgradeCurrentLexicon(stored: CurrentLexicon): CurrentLexicon {
   const nextBaseIds = new Set(nextBase.map((concept) => concept.id));
   for (const [id, concept] of merged) {
     if (nextBaseIds.has(id)) continue;
-    const learnedTerms = concept.terms.filter((term) => term.source !== "base" && isUsefulKeywordCandidate(term.value));
+    const learnedTerms = concept.terms.filter((term) => term.source === "manual" && isUsefulKeywordCandidate(term.value));
     if (learnedTerms.length) concept.terms = learnedTerms;
     else merged.delete(id);
   }
@@ -50,7 +50,7 @@ export function upgradeCurrentLexicon(stored: CurrentLexicon): CurrentLexicon {
     if (!existing) merged.set(base.id, base);
     else {
       existing.label = base.label;
-      existing.terms = dedupeTerms([...base.terms, ...existing.terms.filter((term) => term.source !== "base" && isUsefulKeywordCandidate(term.value))]);
+      existing.terms = dedupeTerms([...base.terms, ...existing.terms.filter((term) => term.source === "manual" && isUsefulKeywordCandidate(term.value))]);
     }
   }
   return { baseVersion: KEYWORD_LEXICON_VERSION, revision: stored.revision + 1, updatedAt: new Date().toISOString(), concepts: Array.from(merged.values()) };
@@ -139,17 +139,17 @@ export function matchConceptToResume(label: string, concept: CurrentKeywordConce
 }
 
 export function scanKnownKeywords(jd: string, resumeLines: readonly string[], lexicon: CurrentLexicon): LocalKeywordMatch[] {
-  const candidates = lexicon.concepts.flatMap((concept) => concept.terms.flatMap(({ value }) => {
+  const candidates = lexicon.concepts.flatMap((concept) => concept.terms.flatMap(({ value, source }) => {
     const matches = Array.from(jd.matchAll(surfacePattern(value, true)));
     const match = matches.find((candidate) => isUsefulKeywordCandidate(candidate[0], evidenceFor(jd, candidate.index, candidate.index + candidate[0].length)));
     if (!match) return [];
     const evidence = evidenceFor(jd, match.index, match.index + match[0].length);
-    return [{ concept, sourceText: match[0], start: match.index, end: match.index + match[0].length, evidence }];
+    return [{ concept, source, sourceText: match[0], start: match.index, end: match.index + match[0].length, evidence }];
   })).sort((left, right) => left.start - right.start || right.sourceText.length - left.sourceText.length);
   const accepted = new Map<string, (typeof candidates)[number]>();
   for (const candidate of candidates) {
     const existing = accepted.get(candidate.concept.id);
     if (!existing || candidate.sourceText.length > existing.sourceText.length) accepted.set(candidate.concept.id, candidate);
   }
-  return Array.from(accepted.values()).sort((left, right) => left.start - right.start).map(({ concept, sourceText, evidence }) => ({ conceptId: concept.id, label: sourceText, evidence, ...matchConceptToResume(sourceText, concept, resumeLines) }));
+  return Array.from(accepted.values()).sort((left, right) => left.start - right.start).map(({ concept, source, sourceText, evidence }) => ({ conceptId: concept.id, label: sourceText, evidence, source, ...matchConceptToResume(sourceText, concept, resumeLines) }));
 }

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   addTermsToCurrentLexicon, createCurrentLexicon,
-  matchConceptToResume, relinkLearnedConcept, sameSurfaceFamily, scanKnownKeywords,
+  matchConceptToResume, sameSurfaceFamily, scanKnownKeywords, surfacePattern,
   type CurrentLexicon, type LocalKeywordMatch,
 } from "@/lib/keyword-matcher";
 import { loadCurrentLexicon, saveCurrentLexicon } from "@/lib/keyword-store";
@@ -38,6 +38,7 @@ type Keyword = {
   question?: string;
   aliases?: string[];
   userApproved?: boolean;
+  source?: "base" | "manual" | "llm";
 };
 type ResumeVersion = { id: string; name: string; fileName: string; texts: string[]; uploadedAt: string; docxBase64?: string };
 type ApplicationProject = {
@@ -170,6 +171,7 @@ function keywordFromLocalMatch(match: LocalKeywordMatch, index: number): Keyword
     evidence: match.evidence,
     importance: "important",
     category: "responsibility",
+    source: match.source,
     rewrites: [],
     needsMoreEvidence: match.status === "red",
   };
@@ -415,24 +417,12 @@ function PlacementToggle({ placement, original, onChange }: { placement: "augmen
 }
 
 function KeywordMark({ keyword, selected, onClick, sourceText }: { keyword: Keyword; selected: boolean; onClick: (event: MouseEvent<HTMLButtonElement>) => void; sourceText?: string }) {
-  return <button type="button" data-keyword-id={keyword.id} onClick={onClick} className={`keyword keyword-${keyword.status} ${selected ? "is-selected" : ""}`} title={`${keyword.label} · ${statusLabel[keyword.status]}`}>{sourceText || keyword.label}</button>;
-}
-
-function morphologyStem(value: string) {
-  let word = value.toLowerCase();
-  if (/yses$/.test(word)) word = word.replace(/yses$/, "ysis");
-  else if (/ies$/.test(word)) word = word.replace(/ies$/, "y");
-  else if (/ied$/.test(word)) word = word.replace(/ied$/, "y");
-  word = word.replace(/ically$/, "ic").replace(/ally$/, "al").replace(/ality$/, "al");
-  word = word.replace(/(?:ments?|ness)$/i, "").replace(/(?:ation|ition|tion)$/i, "");
-  word = word.replace(/(?:ing|ed)$/i, "").replace(/(?:es|s)$/i, "").replace(/al$/i, "");
-  return word.length > 4 ? word.replace(/e$/i, "") : word;
+  const sourceLabel = keyword.source === "base" ? "基础词表" : keyword.source === "manual" ? "手动添加" : keyword.source === "llm" ? "AI 补充" : "来源待更新";
+  return <button type="button" data-keyword-id={keyword.id} onClick={onClick} className={`keyword keyword-${keyword.status} ${selected ? "is-selected" : ""}`} title={`${keyword.label} · ${statusLabel[keyword.status]} · ${sourceLabel}`}>{sourceText || keyword.label}</button>;
 }
 
 function keywordSourcePattern(label: string) {
-  const stems = (label.match(/[a-z0-9+#]+/gi) || []).filter((word) => word.length > 2).map(morphologyStem);
-  if (!stems.length) return /$a/g;
-  return new RegExp(`\\b${stems.map((stem) => `${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[a-z]*`).join("[\\s-]+")}\\b`, "gi");
+  return surfacePattern(label, true);
 }
 
 function DiffText({ before, after, side }: { before: string; after: string; side: "before" | "after" }) {
@@ -1017,7 +1007,6 @@ export default function Home() {
     const localKeywords = localMatches.map(keywordFromLocalMatch);
     const aiKeywords = await analyzeKeywordsWithAI(content, [], [], lines, localKeywords.map((keyword) => ({ label: keyword.label, conceptId: keyword.conceptId })));
     const usedAiIds = new Set<string>();
-    let nextLexicon = currentLexicon;
     const combined = localKeywords.map((localKeyword) => {
       let effectiveKeyword = localKeyword;
       const aiKeyword = aiKeywords.find((candidate) => {
@@ -1026,12 +1015,7 @@ export default function Home() {
       });
       if (aiKeyword) {
         usedAiIds.add(aiKeyword.id);
-        if (aiKeyword.conceptId && aiKeyword.conceptId !== localKeyword.conceptId) {
-          nextLexicon = relinkLearnedConcept(nextLexicon, { fromConceptId: localKeyword.conceptId!, toConceptId: aiKeyword.conceptId, label: localKeyword.label, aliases: aiKeyword.aliases });
-          effectiveKeyword = { ...localKeyword, conceptId: aiKeyword.conceptId };
-        } else if (aiKeyword.aliases?.length) {
-          nextLexicon = addTermsToCurrentLexicon(nextLexicon, { conceptId: localKeyword.conceptId, label: localKeyword.label, aliases: aiKeyword.aliases, source: "llm" }).lexicon;
-        }
+        if (aiKeyword.conceptId && aiKeyword.conceptId !== localKeyword.conceptId) effectiveKeyword = { ...localKeyword, conceptId: aiKeyword.conceptId };
       }
       if (!aiKeyword || effectiveKeyword.status !== "red") return effectiveKeyword;
       return {
@@ -1045,23 +1029,21 @@ export default function Home() {
     });
 
     for (const aiKeyword of aiKeywords.filter((candidate) => !usedAiIds.has(candidate.id))) {
-      const addition = addTermsToCurrentLexicon(nextLexicon, { conceptId: aiKeyword.conceptId, label: aiKeyword.label, aliases: aiKeyword.aliases || [], source: "llm" });
-      nextLexicon = addition.lexicon;
-      const learnedConcept = nextLexicon.concepts.find((concept) => concept.id === addition.conceptId)!;
+      const learnedConcept = currentLexicon.concepts.find((concept) => concept.id === aiKeyword.conceptId) || { id: `session_${aiKeyword.id}`, label: aiKeyword.label, terms: [{ value: aiKeyword.label, source: "llm" as const }] };
       const localMatch = matchConceptToResume(aiKeyword.label, learnedConcept, lines);
       combined.push({
         ...aiKeyword,
-        id: `learned-result-${addition.conceptId}-${combined.length}`,
-        conceptId: addition.conceptId,
+        id: `ai-result-${learnedConcept.id}-${combined.length}`,
+        conceptId: learnedConcept.id,
+        source: "llm",
         status: localMatch.status,
         resumeMatch: localMatch.resumeMatch,
         suggestion: localMatch.suggestion,
-        aliases: learnedConcept.terms.map((term) => term.value),
+        aliases: aiKeyword.aliases || [],
         rewrites: localMatch.status === "red" ? aiKeyword.rewrites : [],
         needsMoreEvidence: localMatch.status === "red" ? aiKeyword.needsMoreEvidence : false,
       });
     }
-    if (nextLexicon.revision !== currentLexicon.revision) setCurrentLexicon(nextLexicon);
     return normalizeStoredKeywords(combined);
   }
   async function createProject() {
