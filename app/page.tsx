@@ -841,6 +841,9 @@ export default function Home() {
     setRewriteQuestion(keyword.question || (!keyword.rewrites ? "这个项目还没有预生成改写方案，请点击“深度扫描”更新分析。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
     setRedMode("choices");
     setRedDialogOpen(true);
+    if (candidates.length && !keyword.rewrites?.length) {
+      void requestRewrite(keyword, candidates);
+    }
     if (!candidates.length && !keyword.rewrites?.length) {
       setGeneratedSuggestions([]);
       setRewriteQuestion("没有找到适合改写的工作经历 Bullet。请先选择一条经历，或补充真实素材。");

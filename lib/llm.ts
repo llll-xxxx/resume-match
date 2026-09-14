@@ -109,6 +109,15 @@ function parseJSON<T>(value: string) {
   throw new LLMRequestError("模型返回的内容不是有效 JSON，请重试或更换模型", 502);
 }
 
+function chatCompletionText(payload: Record<string, unknown>) {
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const first = choices[0] as { finish_reason?: unknown; message?: { content?: unknown } } | undefined;
+  return {
+    content: typeof first?.message?.content === "string" ? first.message.content : "",
+    finishReason: typeof first?.finish_reason === "string" ? first.finish_reason : "",
+  };
+}
+
 function openAIResponseText(payload: Record<string, unknown>) {
   if (typeof payload.output_text === "string" && payload.output_text.trim()) return payload.output_text;
   const output = Array.isArray(payload.output) ? payload.output : [];
@@ -123,7 +132,7 @@ function openAIResponseText(payload: Record<string, unknown>) {
   throw new LLMRequestError("模型没有返回可解析的内容", 502);
 }
 
-export async function generateJSON<T>({ provider, apiKey, model, system, prompt, schema, schemaName, maxTokens, customBaseUrl }: {
+export async function generateJSON<T>({ provider, apiKey, model, system, prompt, schema, schemaName, maxTokens, customBaseUrl, outputInstruction }: {
   provider: ProviderId;
   apiKey: string;
   model: string;
@@ -133,6 +142,7 @@ export async function generateJSON<T>({ provider, apiKey, model, system, prompt,
   schemaName: string;
   maxTokens: number;
   customBaseUrl?: string;
+  outputInstruction?: string;
 }) {
   if (provider === "openai") {
     const payload = await providerRequest(provider, "/responses", apiKey, {
@@ -164,14 +174,39 @@ export async function generateJSON<T>({ provider, apiKey, model, system, prompt,
   const responseFormat = useJsonSchema
     ? { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } }
     : { type: "json_object" };
-  const payload = await providerRequest(provider, "/chat/completions", apiKey, {
-    method: "POST",
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "system", content: `${system}\n必须只输出 JSON。` }, { role: "user", content: prompt }], response_format: responseFormat }),
-  }, customBaseUrl);
-  const choices = Array.isArray(payload.choices) ? payload.choices : [];
-  const first = choices[0] as { message?: { content?: unknown } } | undefined;
-  if (typeof first?.message?.content !== "string") throw new LLMRequestError("模型没有返回可解析的内容", 502);
-  return { result: parseJSON<T>(first.message.content), usage: payload.usage || null };
+  const attempts = provider === "deepseek" ? 2 : 1;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const attemptMaxTokens = provider === "deepseek" && attempt > 0 ? Math.min(Math.max(maxTokens * 2, 16_000), 64_000) : maxTokens;
+    const payload = await providerRequest(provider, "/chat/completions", apiKey, {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        max_tokens: attemptMaxTokens,
+        messages: [
+          { role: "system", content: `${system}\n${outputInstruction || ""}\n必须只输出一个完整 JSON 对象，不要输出 Markdown、解释或前后缀。${attempt ? "上一次输出为空、被截断或格式错误；这次请压缩文字并确保所有括号完整闭合。" : ""}` },
+          { role: "user", content: prompt },
+        ],
+        response_format: responseFormat,
+        ...(provider === "deepseek" ? { thinking: { type: "disabled" } } : {}),
+      }),
+    }, customBaseUrl);
+    const { content, finishReason } = chatCompletionText(payload);
+    if (finishReason === "length") {
+      lastError = new LLMRequestError("模型输出超过长度限制，结果未生成完整；系统已尝试扩大输出空间", 502);
+      continue;
+    }
+    if (!content.trim()) {
+      lastError = new LLMRequestError("模型返回了空内容；系统已自动重试", 502);
+      continue;
+    }
+    try {
+      return { result: parseJSON<T>(content), usage: payload.usage || null };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new LLMRequestError("模型没有返回可解析的内容", 502);
 }
 
 export function errorResponse(error: unknown) {
