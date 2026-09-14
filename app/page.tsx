@@ -19,6 +19,7 @@ import { loadCurrentLexicon, saveCurrentLexicon } from "@/lib/keyword-store";
 type KeywordStatus = "green" | "yellow" | "red" | "ignored";
 type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; rationale?: string; originalChars?: number; newChars?: number; maxChars?: number };
 type RewriteApiData = { suggestions?: Array<Omit<RewriteSuggestion, "target">>; needsMoreEvidence?: boolean; question?: string | null; error?: string };
+type ConceptReviewItem = { term: string; suggestedConceptId: string | null; selectedConceptId: string | null; matchedTerm: string | null; reason: string; mode: "default" | "new" | "search"; searchText: string };
 type YellowEdit = { targetIndex: number; phraseBefore: string; phraseAfter: string; beforeText: string; afterText: string; guidance: string; originalChars: number; newChars: number; maxChars: number };
 type Keyword = {
   id: string;
@@ -160,6 +161,34 @@ function normalizeStoredKeywords(keywords: Keyword[], lexicon: CurrentLexicon, m
       return [normalized];
     });
   });
+}
+
+function findConceptBySurface(value: string, lexicon: CurrentLexicon) {
+  return lexicon.concepts.find((concept) => concept.terms.some((term) => sameSurfaceFamily(value, term.value)));
+}
+
+function unresolvedManualTerms(terms: string[], lexicon: CurrentLexicon) {
+  return terms.filter((term, index) => !findConceptBySurface(term, lexicon) && terms.findIndex((candidate) => candidate.toLowerCase() === term.toLowerCase()) === index);
+}
+
+function contextForTerm(jd: string, term: string) {
+  const match = surfacePattern(term).exec(jd);
+  if (!match?.index && match?.index !== 0) return term;
+  const start = match.index;
+  const end = start + match[0].length;
+  const left = Math.max(jd.lastIndexOf(".", start - 1), jd.lastIndexOf("\n", start - 1));
+  const rightCandidates = [jd.indexOf(".", end), jd.indexOf("\n", end)].filter((index) => index >= 0);
+  const right = rightCandidates.length ? Math.min(...rightCandidates) + 1 : Math.min(jd.length, end + 320);
+  return jd.slice(left + 1, right).trim();
+}
+
+function synonymSearchConcepts(input: string, lexicon: CurrentLexicon) {
+  const values = input.split(/[,，]/).map((value) => value.trim()).filter(Boolean);
+  const matches = values.flatMap((value) => {
+    const concept = findConceptBySurface(value, lexicon);
+    return concept ? [{ value, concept }] : [];
+  });
+  return { values, matches, conceptIds: Array.from(new Set(matches.map(({ concept }) => concept.id))) };
 }
 
 function keywordFromLocalMatch(match: LocalKeywordMatch, index: number): Keyword {
@@ -474,6 +503,9 @@ export default function Home() {
   const [manualTerms, setManualTerms] = useState<string[]>([]);
   const [currentLexicon, setCurrentLexicon] = useState<CurrentLexicon>(() => createCurrentLexicon());
   const [lexiconStoreReady, setLexiconStoreReady] = useState(false);
+  const [conceptReviewOpen, setConceptReviewOpen] = useState(false);
+  const [conceptReviewBusy, setConceptReviewBusy] = useState(false);
+  const [conceptReviewItems, setConceptReviewItems] = useState<ConceptReviewItem[]>([]);
   const [popupPosition, setPopupPosition] = useState({ left: 520, top: 210 });
   const [redMode, setRedMode] = useState<"choices" | "manual">("choices");
   const [redTarget, setRedTarget] = useState(0);
@@ -542,7 +574,10 @@ export default function Home() {
     const savedProjects = window.localStorage.getItem("resume-match-projects-v1");
     if (savedProjects) {
       const parsed = JSON.parse(savedProjects) as ApplicationProject[];
-      if (Array.isArray(parsed)) setProjects(parsed.map((project) => ({ ...project, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, project.manualTerms || []) })));
+      if (Array.isArray(parsed)) setProjects(parsed.map((project) => {
+        const pendingTerms = unresolvedManualTerms(project.manualTerms || [], loadedLexicon);
+        return { ...project, manualTerms: pendingTerms, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, pendingTerms) };
+      }));
     }
     setCurrentLexicon(loadedLexicon);
     const savedProvider = (window.localStorage.getItem("resume-match-ai-provider-v1") || "openai") as ProviderId;
@@ -922,12 +957,13 @@ export default function Home() {
     setJobTitle(project.jobTitle);
     setProjectName(project.name);
     setProjectNameDraft(project.name);
-    const normalizedKeywords = normalizeStoredKeywords(project.keywords, currentLexicon, project.manualTerms).map((keyword) => ({ ...keyword }));
+    const pendingTerms = unresolvedManualTerms(project.manualTerms || [], currentLexicon);
+    const normalizedKeywords = normalizeStoredKeywords(project.keywords, currentLexicon, pendingTerms).map((keyword) => ({ ...keyword }));
     setKeywords(normalizedKeywords);
     setSelectedId(normalizedKeywords[0]?.id || "");
     setKeywordReviewStarted(false);
     setKeywordCardOpen(false);
-    setManualTerms([...project.manualTerms]);
+    setManualTerms(pendingTerms);
     setGeneratedSuggestions(null);
     setRedDialogOpen(false);
     setFinalCheckPassed(false);
@@ -1179,18 +1215,82 @@ export default function Home() {
   function addManualTerm() {
     const text = window.getSelection()?.toString().trim();
     if (!text) return showNotice("请先在左侧 JD 中划选词语");
-    const existingConcept = currentLexicon.concepts.find((concept) => concept.terms.some(({ value }) => sameSurfaceFamily(text, value)));
-    const addition = existingConcept ? null : addTermsToCurrentLexicon(currentLexicon, { label: text, source: "manual" });
-    const nextLexicon = addition?.lexicon || currentLexicon;
-    const concept = existingConcept || nextLexicon.concepts.find((candidate) => candidate.id === addition?.conceptId)!;
-    if (addition) setCurrentLexicon(nextLexicon);
+    const existingConcept = findConceptBySurface(text, currentLexicon);
+    const concept = existingConcept || { id: `pending_${Date.now()}_${text.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 40)}`, label: text, terms: [{ value: text.toLowerCase(), source: "manual" as const }] };
     const match = matchConceptToResume(text, concept, resumeTexts);
     setKeywords((items) => items.some((item) => item.conceptId === concept.id || item.label.toLowerCase() === text.toLowerCase()) ? items : [...items, keywordFromLocalMatch({ conceptId: concept.id, label: text, evidence: text, source: "manual", ...match }, items.length)]);
-    if (!manualTerms.includes(text)) setManualTerms((terms) => [...terms, text]);
-    showNotice(existingConcept ? `已加入项目：${text}` : `已加入项目并写入当前词库：${text}`);
+    if (!existingConcept && !manualTerms.some((term) => term.toLowerCase() === text.toLowerCase())) setManualTerms((terms) => [...terms, text]);
+    showNotice(existingConcept ? `已按本地词库归入“${existingConcept.label}”` : `已加入“${text}”；重新匹配时统一整理`);
     window.getSelection()?.removeAllRanges();
   }
-  function rescan() {
+  function removePendingTerm(term: string) {
+    setManualTerms((items) => items.filter((item) => item !== term));
+    setKeywords((items) => items.filter((item) => !(item.conceptId?.startsWith("pending_") && item.label.toLowerCase() === term.toLowerCase())));
+  }
+  async function requestConceptReview(terms: string[]) {
+    if (!terms.length) return;
+    if (!requireAI()) {
+      showNotice(`本地匹配已完成；连接模型后可统一整理 ${terms.length} 个新增词`);
+      return;
+    }
+    setConceptReviewBusy(true);
+    try {
+      const response = await fetch("/api/llm/classify-terms", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-llm-api-key": apiKey },
+        body: JSON.stringify({
+          provider: aiProvider,
+          customBaseUrl,
+          model: aiModel,
+          terms: terms.map((term) => ({ term, context: contextForTerm(jdText, term) })),
+          concepts: currentLexicon.concepts.map((concept) => ({ id: concept.id, label: concept.label, terms: concept.terms.map(({ value }) => value) })),
+        }),
+      });
+      const data = await response.json() as { results?: Array<{ term: string; decision: "existing" | "new"; conceptId: string | null; matchedTerm: string | null; reason: string }>; error?: string };
+      if (!response.ok || !data.results) throw new Error(data.error || "模型没有返回可审核的归类结果");
+      const byTerm = new Map(data.results.map((item) => [item.term.toLowerCase(), item]));
+      setConceptReviewItems(terms.map((term) => {
+        const item = byTerm.get(term.toLowerCase());
+        const conceptId = item?.decision === "existing" && currentLexicon.concepts.some((concept) => concept.id === item.conceptId) ? item.conceptId : null;
+        return { term, suggestedConceptId: conceptId, selectedConceptId: conceptId, matchedTerm: conceptId ? item?.matchedTerm || null : null, reason: item?.reason || "没有找到语义相同的现有概念", mode: "default", searchText: "" };
+      }));
+      setConceptReviewOpen(true);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "新增词归类失败；待归类词已保留");
+    } finally {
+      setConceptReviewBusy(false);
+    }
+  }
+  function confirmConceptReview() {
+    let nextLexicon = currentLexicon;
+    const decisions = new Map<string, string>();
+    for (const item of conceptReviewItems) {
+      const search = synonymSearchConcepts(item.searchText, nextLexicon);
+      if (item.mode === "search" && search.conceptIds.length > 1) {
+        showNotice(`“${item.term}”输入的同义词指向多个概念，请调整后再保存`);
+        return;
+      }
+      const targetConceptId = item.mode === "search" ? search.conceptIds[0] || null : item.mode === "new" ? null : item.selectedConceptId;
+      const addition = addTermsToCurrentLexicon(nextLexicon, { conceptId: targetConceptId, label: item.term, aliases: item.mode === "search" ? search.values : [], source: "manual" });
+      nextLexicon = addition.lexicon;
+      decisions.set(item.term.toLowerCase(), addition.conceptId);
+    }
+    const remapped = keywords.map((keyword) => {
+      const conceptId = decisions.get(keyword.label.toLowerCase());
+      if (!conceptId) return keyword;
+      const concept = nextLexicon.concepts.find((candidate) => candidate.id === conceptId)!;
+      const match = matchConceptToResume(keyword.label, concept, resumeTexts);
+      return { ...keyword, conceptId, source: "manual" as const, ...match };
+    }).filter((keyword, index, items) => items.findIndex((candidate) => candidate.conceptId === keyword.conceptId) === index);
+    setCurrentLexicon(nextLexicon);
+    setKeywords(remapped);
+    setManualTerms([]);
+    setConceptReviewOpen(false);
+    setConceptReviewItems([]);
+    prefetchRedRewrites(remapped, jdText, resumeTexts);
+    showNotice(`已确认并学习 ${decisions.size} 个新增词`);
+  }
+  async function rescan() {
     setScanBusy(true);
     const nextKeywords = rematchKeywordsLocally(keywords, resumeTexts, currentLexicon);
     setKeywords(nextKeywords);
@@ -1198,11 +1298,11 @@ export default function Home() {
     setKeywordReviewStarted(false);
     setKeywordCardOpen(false);
     setRedDialogOpen(false);
-    setManualTerms([]);
     setFinalCheckPassed(false);
     setScanBusy(false);
     prefetchRedRewrites(nextKeywords, jdText, resumeTexts);
-    showNotice(`已在本地重新匹配 ${nextKeywords.length} 个固定关键词，未调用模型`);
+    if (manualTerms.length) await requestConceptReview(manualTerms);
+    else showNotice(`已在本地重新匹配 ${nextKeywords.length} 个关键词`);
   }
   function resetResumeAndRescan() {
     if (!activeResume) return;
@@ -1255,7 +1355,7 @@ export default function Home() {
         <div className="project-title">{view === "workspace" ? <><button className="icon-btn" aria-label="返回项目列表" onClick={() => setView("applications")}><ArrowLeft /></button><div><div className="title-row">{editingProjectName ? <span className="project-name-editor"><input autoFocus value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectNameDraft.trim()) { setProjectName(projectNameDraft.trim()); setEditingProjectName(false); } if (event.key === "Escape") setEditingProjectName(false); }} /><button onClick={() => { if (projectNameDraft.trim()) setProjectName(projectNameDraft.trim()); setEditingProjectName(false); }}>保存</button></span> : <><strong>{projectReady ? projectName : "新建申请项目"}</strong>{projectReady && <button className="rename-project" aria-label="重命名项目" onClick={() => { setProjectNameDraft(projectName); setEditingProjectName(true); }}><Pencil /></button>}</>}{projectReady && <span className="saved"><Cloud /> 已保存</span>}</div><span className="subtle">{resumeName ? `基于简历版本：${resumeName}` : "请先上传基础简历"}</span></div></> : <><LayoutGrid /><div><div className="title-row"><strong>{view === "applications" ? "申请项目" : view === "resumes" ? "基础简历" : "素材收藏"}</strong></div><span className="subtle">个人工作区</span></div></>}</div>
         <div className="top-actions"><Button variant="outline" className={`ai-settings-trigger ${aiConnected ? "connected" : ""}`} onClick={() => setAiSettingsOpen(true)}><Settings />{aiConnected ? `${activeProviderInfo.shortLabel} · ${aiModel}` : "AI 设置"}</Button>{view === "workspace" && projectReady && <>
           <Button variant="outline" className="delete-project-button" onClick={() => deleteProject(activeProjectId)}><Trash2 />删除项目</Button>
-          <Button variant="outline" onClick={rescan} disabled={scanBusy}><RefreshCw className={scanBusy ? "animate-spin" : ""} />{scanBusy ? "匹配中" : "重新匹配"}</Button>
+          <Button variant="outline" onClick={() => void rescan()} disabled={scanBusy || conceptReviewBusy}><RefreshCw className={scanBusy || conceptReviewBusy ? "animate-spin" : ""} />{conceptReviewBusy ? "正在整理新增词" : scanBusy ? "匹配中" : "重新匹配"}</Button>
           <Button className="export-btn" onClick={exportResume}><Download />导出 Word</Button>
         </>}</div>
       </header>
@@ -1280,7 +1380,7 @@ export default function Home() {
               <div className="jd-scroll"><article className="jd-document">
                 <div className="jd-brand"><span className="company-logo large">{companyName.charAt(0) || "J"}</span><div><h1>{jobTitle || "职位描述"}</h1>{companyName && <p>{companyName}</p>}</div></div>
                 <div className="real-jd-text">{jdText.split(/\n+/).filter(Boolean).map((paragraph, index) => <p key={index}>{renderJdText(paragraph)}</p>)}</div>
-                {manualTerms.length > 0 && <div className="manual-terms"><b>待匹配的手动关键词</b>{manualTerms.map((term) => <span key={term}>{term}<button onClick={() => setManualTerms((items) => items.filter((item) => item !== term))}><X /></button></span>)}</div>}
+                {manualTerms.length > 0 && <div className="manual-terms"><b>待归类的手动关键词</b>{manualTerms.map((term) => <span key={term}>{term}<button aria-label={`移除 ${term}`} onClick={() => removePendingTerm(term)}><X /></button></span>)}</div>}
                 {keywords.length > 0 && <div className="manual-results"><b>当前关键词</b><p>点击可查看或处理匹配结果</p><div>{keywords.map((keyword) => <KeywordMark key={keyword.id} keyword={keyword} selected={selectedId === keyword.id} onClick={(event) => chooseKeyword(keyword, event)} />)}</div></div>}
               </article></div>
               <div className="legend"><span><i className="green" />已覆盖</span><span><i className="yellow" />相近表达</span><span><i className="red" />未覆盖</span><span><i className="ignored" />已忽略</span><button className={`next-keyword ${selected.status}`} onClick={advanceToNext} disabled={finalCheckBusy}>{finalCheckBusy ? "正在检查…" : nextActionLabel}<kbd>Ctrl ↵</kbd><ArrowRight /></button></div>
@@ -1300,10 +1400,10 @@ export default function Home() {
 
       <Dialog open={aiSettingsOpen} onOpenChange={setAiSettingsOpen}>
         <DialogContent className="ai-settings-dialog sm:max-w-[640px]">
-          <DialogHeader><div className="ai-settings-icon"><KeyRound /></div><DialogTitle>模型服务设置</DialogTitle><DialogDescription>模型仅用于生成简历改写建议。关键词识别完全在本地完成，不会发送给模型处理。</DialogDescription></DialogHeader>
+          <DialogHeader><div className="ai-settings-icon"><KeyRound /></div><DialogTitle>模型服务设置</DialogTitle><DialogDescription>模型只用于生成改写建议，以及批量整理你手动选定的新增词。关键词扫描仍完全在本地完成。</DialogDescription></DialogHeader>
           <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
           <div className="ai-settings-form">
-            <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会在本地扫描完成时后台准备红色关键词的改写建议</span></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
+            <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会后台准备红色关键词改写，并在重新匹配时整理待归类词</span></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
             {aiProvider === "custom" && <label><span>API Base URL</span><input type="url" value={customBaseUrl} onChange={(event) => { setCustomBaseUrl(event.target.value); setAiConnected(false); window.localStorage.setItem("resume-match-ai-custom-base-url-v1", event.target.value); }} placeholder="https://provider.example.com/v1" /><small>仅支持公开的 HTTPS 地址，并按 OpenAI Chat Completions 格式调用；本机和内网地址会被拒绝。</small></label>}
             <label><span>{activeProviderInfo.shortLabel} API Key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAiConnected(false); setConnectedProviders((items) => items.filter((item) => item !== aiProvider)); }} placeholder={activeProviderInfo.keyHint} /><small>{activeProviderInfo.keyUrl ? <>还没有密钥？前往 <a href={activeProviderInfo.keyUrl} target="_blank" rel="noreferrer">{activeProviderInfo.label} 控制台</a> 创建。各家的 API 账户和费用相互独立。</> : "请使用兼容服务商发放的 API Key。"}</small></label>
             <div className="ai-key-actions"><Button onClick={() => void connectAI()} disabled={aiConnecting || !apiKey.trim() || (aiProvider === "custom" && !customBaseUrl.trim())}>{aiConnecting ? <LoaderCircle className="animate-spin" /> : <KeyRound />}{aiConnecting ? "正在连接…" : "验证密钥并读取模型"}</Button>{apiKey && <Button variant="outline" onClick={clearAIKey}>清除这家密钥</Button>}</div>
@@ -1311,6 +1411,24 @@ export default function Home() {
             <div className={`ai-connection-state ${aiConnected ? "ok" : ""}`}><i />{aiConnected ? `当前使用：${activeProviderInfo.shortLabel} · ${aiModel}` : `尚未完成 ${activeProviderInfo.shortLabel} 配置`}</div>
             <p className="ai-privacy-note">API Key 仅保存在当前浏览器会话中。调用时，职位描述、简历文本和你补充的素材会发送给当前选中的服务商；应用不会把密钥写入项目，也不会在调用失败时改用本地模板。</p>
           </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={conceptReviewOpen} onOpenChange={setConceptReviewOpen}>
+        <DialogContent className="concept-review-dialog sm:max-w-[760px]">
+          <DialogHeader><DialogTitle>确认新增词归类</DialogTitle><DialogDescription>下列建议会默认采用。只需要修改你认为不正确的项目，确认后才会写入个人词库。</DialogDescription></DialogHeader>
+          <div className="concept-review-list">{conceptReviewItems.map((item, index) => {
+            const suggestedConcept = currentLexicon.concepts.find((concept) => concept.id === item.suggestedConceptId);
+            const search = synonymSearchConcepts(item.searchText, currentLexicon);
+            const searchConcepts = search.conceptIds.map((id) => currentLexicon.concepts.find((concept) => concept.id === id)).filter(Boolean);
+            const effectiveConcept = item.mode === "search" && searchConcepts.length === 1 ? searchConcepts[0] : item.mode === "default" ? suggestedConcept : null;
+            return <section className="concept-review-row" key={item.term}>
+              <div className="concept-review-heading"><div><b>{item.term}</b><span>{item.mode === "default" ? "默认采用" : item.mode === "new" ? "已改为新概念" : "按输入的同义词查找"}</span></div><strong className={effectiveConcept ? "existing" : "new"}>{effectiveConcept ? effectiveConcept.label : "NEW"}</strong></div>
+              {item.mode === "default" && <p>{suggestedConcept ? <>模型认为它与 <em>{item.matchedTerm || suggestedConcept.label}</em> 是同义表达。{item.reason}</> : <>模型没有找到语义相同的现有概念。{item.reason}</>}</p>}
+              {item.mode === "search" && <div className="concept-synonym-search"><label>输入你认为正确的同义词，可用逗号分隔</label><input autoFocus value={item.searchText} onChange={(event) => setConceptReviewItems((items) => items.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, searchText: event.target.value } : candidate))} placeholder="例如 product planning, requirements planning" />{!search.values.length ? <small>输入后会直接查询本地词库。</small> : searchConcepts.length === 1 ? <small className="found">已找到：{searchConcepts[0]?.label}。确认后会归入这个概念。</small> : searchConcepts.length > 1 ? <small className="conflict">这些词指向多个概念，请删减或调整。</small> : <small>词库中没有这些表达；确认后会把它们与“{item.term}”一起建立为新概念。</small>}</div>}
+              <div className="concept-review-actions">{item.mode !== "new" && <button onClick={() => setConceptReviewItems((items) => items.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, mode: "new", selectedConceptId: null, searchText: "" } : candidate))}>作为新概念</button>}<button onClick={() => setConceptReviewItems((items) => items.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, mode: "search", searchText: candidate.searchText } : candidate))}>查找其他同义词</button>{item.mode !== "default" && <button onClick={() => setConceptReviewItems((items) => items.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, mode: "default", selectedConceptId: candidate.suggestedConceptId, searchText: "" } : candidate))}>恢复默认建议</button>}</div>
+            </section>;
+          })}</div>
+          <div className="concept-review-footer"><span>未修改的建议会直接采用</span><Button variant="outline" onClick={() => setConceptReviewOpen(false)}>稍后处理</Button><Button onClick={confirmConceptReview}>确认并学习全部</Button></div>
         </DialogContent>
       </Dialog>
       <Dialog open={finalCheckPassed} onOpenChange={setFinalCheckPassed}><DialogContent className="completion-dialog sm:max-w-[480px]"><div className="completion-icon"><Check /></div><DialogHeader><DialogTitle>最终检查通过</DialogTitle><DialogDescription>所有关键词都已处理，简历可以进入导出阶段。</DialogDescription></DialogHeader><div className="completion-summary"><span>关键词覆盖率 <b>{score}%</b></span><span>已忽略 <b>{counts.ignored}</b></span><span>待处理 <b>0</b></span></div><div className="completion-actions"><Button variant="outline" onClick={() => setFinalCheckPassed(false)}>返回检查</Button><Button onClick={exportResume}><Download />确认完成并导出</Button></div></DialogContent></Dialog>
