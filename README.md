@@ -128,7 +128,11 @@ Add `-PdfPath "$env:TEMP\resume-preview.pdf"` when a PDF preview is also needed.
 
 ## Open the app on Windows
 
-Double-click `start-resume-match.cmd`. It starts the local server and opens `http://localhost:5173/` in the default browser. Keep the command window open while using the app; press Ctrl+C in that window to stop it.
+Double-click `start-resume-match.cmd` to open the published ResumeMatch site in the default browser. This is the normal day-to-day entry point and does not require Node.js or a local development server.
+
+Published site: https://resume-match-workbench.jc-something.chatgpt.site
+
+Use `npm run dev` only when changing or debugging the source code. The local development address is `http://localhost:5173/` and is available only while that command is running.
 
 When using the Sites plugin, follow its skill instructions for installation, builds, and publishing. These npm commands remain available for standalone use.
 
