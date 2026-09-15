@@ -107,7 +107,7 @@
 .ai-settings-trigger { max-width: 230px; }
 .ai-settings-trigger.connected { color: #087150; border-color: #a9dccc; background: #f0faf6; }
 .ai-settings-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-settings-dialog { padding: 26px; }
+.ai-settings-dialog { max-height: 90vh; overflow-y: auto; padding: 26px; }
 .ai-settings-dialog [data-slot="dialog-header"] { text-align: left; }
 .ai-settings-icon { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 5px; color: #3158d4; background: #edf1ff; border-radius: 10px; }
 .ai-settings-icon svg { width: 19px; }
@@ -187,6 +187,21 @@
 .keyword-footer-actions { justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
 .keyword-footer-actions > span { margin-left: auto; }
 .top-actions .delete-project-button { color: #a33f3f; border-color: #e5c3c0; background: #fff8f7; }
+.export-settings-section { margin-top: 7px; padding: 15px; background: #f7f8fb; border: 1px solid #e0e5ed; border-radius: 10px; }
+.settings-section-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 11px; }
+.settings-section-title b { color: #344056; font-size: 13px; }
+.settings-section-title span { color: #8590a2; font-size: 10px; }
+.export-name-fields { gap: 11px; margin-top: 0; }
+.settings-divider { display: flex; align-items: center; gap: 10px; color: #7b8698; font-size: 10px; font-weight: 700; }
+.settings-divider::before,.settings-divider::after { content: ""; flex: 1; height: 1px; background: #e1e5ec; }
+.proofreading-dialog { max-height: 86vh; overflow: hidden; }
+.proofreading-list { display: grid; gap: 8px; max-height: 52vh; overflow: auto; padding: 3px; }
+.proofreading-list article { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 12px 13px; background: #f8f9fb; border: 1px solid #e0e4ec; border-radius: 8px; }
+.proofreading-list article b { color: #354157; font-size: 12px; }
+.proofreading-list article span { margin-left: 8px; color: #8992a2; font-size: 9px; }
+.proofreading-list article p { margin: 6px 0 0; color: #596579; font: 11px/1.45 Arial,sans-serif; }
+.proofreading-list .manual-review-label { padding: 5px 8px; color: #8a6309; background: #fff3ce; border-radius: 5px; }
+.proofreading-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; border-top: 1px solid #e3e7ee; }
 .resume-editor-actions { display: flex; align-items: center; gap: 5px; }
 .resume-editor-actions button { height: 28px; display: inline-flex; align-items: center; justify-content: center; color: #59667a; background: #fff; border: 1px solid #d7dde7; border-radius: 5px; }
 .resume-editor-actions button:hover:not(:disabled) { color: #2949ad; border-color: #9baada; background: #f5f7ff; }
