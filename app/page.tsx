@@ -19,6 +19,7 @@ import { loadCurrentLexicon, saveCurrentLexicon } from "@/lib/keyword-store";
 type KeywordStatus = "green" | "yellow" | "red" | "ignored";
 type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; rationale?: string; originalChars?: number; newChars?: number; maxChars?: number };
 type RewriteApiData = { suggestions?: Array<Omit<RewriteSuggestion, "target">>; needsMoreEvidence?: boolean; question?: string | null; error?: string };
+type RewriteCandidate = { text: string; index: number; originalChars?: number; maxChars?: number };
 type ConceptReviewItem = { term: string; suggestedConceptId: string | null; selectedConceptId: string | null; matchedTerm: string | null; reason: string; mode: "default" | "new" | "search"; searchText: string };
 type YellowEdit = { targetIndex: number; phraseBefore: string; phraseAfter: string; beforeText: string; afterText: string; guidance: string; originalChars: number; newChars: number; maxChars: number };
 type Keyword = {
@@ -305,7 +306,7 @@ function closestResumeParagraph(node: Node | null, host: HTMLElement) {
   return paragraph && host.contains(paragraph) ? paragraph : null;
 }
 
-function WordResumePreview({ resume, sourceTexts, currentTexts, keywords, selected, renderRevision, onReupload, onTextChange, registerLayoutValidator }: { resume?: ResumeVersion; sourceTexts: string[]; currentTexts: string[]; keywords: Keyword[]; selected: Keyword; renderRevision: number; onReupload: () => void; onTextChange: (index: number, text: string) => void; registerLayoutValidator: (validator: ((index: number, text: string) => boolean) | null) => void }) {
+function WordResumePreview({ resume, sourceTexts, currentTexts, keywords, selected, renderRevision, onReupload, onTextChange, onEditingComplete, registerLayoutValidator }: { resume?: ResumeVersion; sourceTexts: string[]; currentTexts: string[]; keywords: Keyword[]; selected: Keyword; renderRevision: number; onReupload: () => void; onTextChange: (index: number, text: string) => void; onEditingComplete: () => void; registerLayoutValidator: (validator: ((index: number, text: string) => boolean) | null) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const styleRef = useRef<HTMLDivElement>(null);
   const editingParagraphRef = useRef<HTMLElement | null>(null);
@@ -353,7 +354,6 @@ function WordResumePreview({ resume, sourceTexts, currentTexts, keywords, select
         breakPages: true, renderHeaders: true, renderFooters: true, useBase64URL: true,
       });
       if (cancelled) return;
-      host.querySelectorAll<HTMLElement>("section.docx").forEach((page) => { page.contentEditable = "true"; page.spellcheck = false; });
       setPageCount(host.querySelectorAll("section.docx").length);
       setPreviewState("ready");
     }).catch(() => { if (!cancelled) setPreviewState("error"); });
@@ -373,6 +373,8 @@ function WordResumePreview({ resume, sourceTexts, currentTexts, keywords, select
       const paragraph = tagged || Array.from(host.querySelectorAll<HTMLElement>("p")).find((node) => (node.textContent || "").trim() === source.trim());
       if (!paragraph) return;
       paragraph.dataset.resumeIndex = String(index);
+      paragraph.setAttribute("contenteditable", "plaintext-only");
+      paragraph.spellcheck = false;
       if (!paragraph.dataset.originalHeight) paragraph.dataset.originalHeight = String(paragraph.getBoundingClientRect().height);
       if ((paragraph.textContent || "").trim() !== replacement.trim()) replaceParagraphText(paragraph, replacement);
     });
@@ -435,16 +437,12 @@ function WordResumePreview({ resume, sourceTexts, currentTexts, keywords, select
       return match ? <mark key={partIndex} className={`resume-keyword-highlight ${match.status} ${match.id === selected.id ? "selected" : ""}`}>{part}</mark> : <span key={partIndex}>{part}</span>;
     })}</p>;
   })}</article></div>;
-  return <div className="docx-preview-shell">{previewState === "ready" && <div className={`docx-page-status ${pageCount === 1 && overflowCount === 0 ? "ok" : "over"}`}>{overflowCount > 0 ? `${overflowCount} 条内容超过原行数` : pageCount === 1 ? "Word 页面：1 页" : `检测到 ${pageCount} 页，请缩短内容`}</div>}<div ref={styleRef} /><div ref={hostRef} className="docx-preview-host" onBeforeInputCapture={(event) => { const host = hostRef.current; if (!host) return; editingParagraphRef.current = closestResumeParagraph(window.getSelection()?.anchorNode || event.target as Node, host); }} onInputCapture={(event) => { const host = hostRef.current; if (!host) return; const paragraph = editingParagraphRef.current || closestResumeParagraph(window.getSelection()?.anchorNode || event.target as Node, host); editingParagraphRef.current = null; const index = Number(paragraph?.dataset.resumeIndex); if (!paragraph || !Number.isInteger(index)) return; onTextChange(index, paragraph.textContent || ""); window.requestAnimationFrame(() => { paragraph.classList.toggle("line-over", paragraph.getBoundingClientRect().height > Number(paragraph.dataset.originalHeight) + 1); setOverflowCount(host.querySelectorAll("p.line-over").length || 0); }); }} /></div>;
+  return <div className="docx-preview-shell">{previewState === "ready" && <div className={`docx-page-status ${pageCount === 1 && overflowCount === 0 ? "ok" : "over"}`}>{overflowCount > 0 ? `${overflowCount} 条内容超过原行数` : pageCount === 1 ? "Word 页面：1 页" : `检测到 ${pageCount} 页，请缩短内容`}</div>}<div ref={styleRef} /><div ref={hostRef} className="docx-preview-host" onKeyDownCapture={(event) => { if (event.key === "Enter") event.preventDefault(); }} onBeforeInputCapture={(event) => { const host = hostRef.current; if (!host) return; editingParagraphRef.current = closestResumeParagraph(window.getSelection()?.anchorNode || event.target as Node, host); }} onInputCapture={(event) => { const host = hostRef.current; if (!host) return; const paragraph = editingParagraphRef.current || closestResumeParagraph(window.getSelection()?.anchorNode || event.target as Node, host); editingParagraphRef.current = null; const index = Number(paragraph?.dataset.resumeIndex); if (!paragraph || !Number.isInteger(index)) return; onTextChange(index, paragraph.textContent || ""); window.requestAnimationFrame(() => { paragraph.classList.toggle("line-over", paragraph.getBoundingClientRect().height > Number(paragraph.dataset.originalHeight) + 1); setOverflowCount(host.querySelectorAll("p.line-over").length || 0); }); }} onBlurCapture={(event) => { const host = hostRef.current; if (!host || !closestResumeParagraph(event.target as Node, host) || event.relatedTarget instanceof Node && host.contains(event.relatedTarget)) return; onEditingComplete(); }} /></div>;
 }
 
 function BulletContextPanel({ texts, target, onTargetChange }: { texts: string[]; target: number; onTargetChange: (index: number) => void }) {
   const candidates = texts.map((text, index) => ({ text, index })).filter(({ text }) => isResumeBullet(text));
   return <aside className="resume-context-panel"><div><b>工作经历 Bullet</b><span>选择写入位置</span></div>{candidates.map(({ text, index }) => <button key={index} className={target === index ? "active" : ""} onClick={() => onTargetChange(index)}><span>{index + 1}</span><p>{text}</p><small>{target === index ? "当前目标" : "选择此条"}</small></button>)}</aside>;
-}
-
-function PlacementToggle({ placement, original, onChange }: { placement: "augment" | "replace"; original: string; onChange: (placement: "augment" | "replace", draft: string) => void }) {
-  return <div className="placement-toggle"><span>写入方式</span><button className={placement === "augment" ? "active" : ""} onClick={() => onChange("augment", "")}>补充原有内容</button><button className={placement === "replace" ? "active" : ""} onClick={() => onChange("replace", original)}>替换整条 Bullet</button></div>;
 }
 
 function KeywordMark({ keyword, selected, onClick, sourceText }: { keyword: Keyword; selected: boolean; onClick: (event: MouseEvent<HTMLButtonElement>) => void; sourceText?: string }) {
@@ -513,7 +511,6 @@ export default function Home() {
   const [generatedSuggestions, setGeneratedSuggestions] = useState<RewriteSuggestion[] | null>(null);
   const [rewriteBusy, setRewriteBusy] = useState(false);
   const [rewriteQuestion, setRewriteQuestion] = useState("");
-  const [redPlacement, setRedPlacement] = useState<"augment" | "replace">("augment");
   const [finalCheckBusy, setFinalCheckBusy] = useState(false);
   const [finalCheckPassed, setFinalCheckPassed] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -813,7 +810,7 @@ export default function Home() {
     setConnectedProviders((items) => items.filter((item) => item !== aiProvider));
     showNotice(`已清除 ${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 的 API Key`);
   }
-  function fetchRewriteData(keyword: Keyword, candidates: Array<{ text: string; index: number }>, sourceJd: string, material = "", placement: "augment" | "replace" = "augment") {
+  function fetchRewriteData(keyword: Keyword, candidates: RewriteCandidate[], sourceJd: string, material = "", placement: "augment" | "replace" = "augment") {
     const reusable = !material && placement === "augment";
     const existing = reusable ? rewriteRequestsRef.current.get(keyword.id) : undefined;
     if (existing) return existing;
@@ -858,7 +855,7 @@ export default function Home() {
     };
     void Promise.all([worker(), worker()]);
   }
-  async function requestRewrite(keyword: Keyword, candidates: Array<{ text: string; index: number }>, material = "", placement: "augment" | "replace" = "augment") {
+  async function requestRewrite(keyword: Keyword, candidates: RewriteCandidate[], material = "", placement: "augment" | "replace" = "augment") {
     if (!requireAI()) return;
     setRewriteBusy(true);
     setRewriteQuestion("");
@@ -1035,6 +1032,7 @@ export default function Home() {
     redoStackRef.current.push({ texts: [...resumeTexts], keywords: keywords.map((item) => ({ ...item })) });
     setResumeTexts(snapshot.texts);
     setKeywords(snapshot.keywords);
+    setResumeRenderRevision((revision) => revision + 1);
     setCanUndo(undoStackRef.current.length > 0);
     setCanRedo(true);
     lastManualEditRef.current = 0;
@@ -1046,6 +1044,7 @@ export default function Home() {
     undoStackRef.current.push({ texts: [...resumeTexts], keywords: keywords.map((item) => ({ ...item })) });
     setResumeTexts(snapshot.texts);
     setKeywords(snapshot.keywords);
+    setResumeRenderRevision((revision) => revision + 1);
     setCanUndo(true);
     setCanRedo(redoStackRef.current.length > 0);
     lastManualEditRef.current = 0;
@@ -1141,14 +1140,23 @@ export default function Home() {
   }
   function applyUserDraft(text: string) {
     if (!text.trim()) return showNotice("请先填写真实经历");
-    const original = resumeTexts[redTarget].replace(/\.$/, "");
-    const finalText = redPlacement === "augment" ? `${original}; ${text.trim().charAt(0).toLowerCase()}${text.trim().slice(1)}` : text.trim();
+    const finalText = text.trim();
     if (!fitsOriginalLayout(redTarget, finalText)) return;
     rememberUndo();
     setResumeTexts((texts) => texts.map((item, index) => index === redTarget ? finalText : item));
     setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, status: finalText.toLowerCase().includes(selected.label.toLowerCase()) ? "green" : "yellow", resumeMatch: selected.label } : item));
     setRedDialogOpen(false);
     showNotice("已写入指定经历，并完成本地匹配");
+  }
+  function openManualBulletEditor() {
+    const target = relevantResumeLines(resumeTexts, selected.label)[0]?.index ?? 0;
+    setRedTarget(target);
+    setManualDraft(resumeTexts[target] || "");
+    setRedMode("manual");
+  }
+  function selectManualBullet(index: number) {
+    setRedTarget(index);
+    setManualDraft(resumeTexts[index] || "");
   }
   function advanceToNext() {
     if (finalCheckBusy || finalCheckPassed) return;
@@ -1388,7 +1396,7 @@ export default function Home() {
 
             <section className="resume-pane">
               <div className="pane-header resume-head"><div><b>{resumeName}</b><span>Word 原始版式预览 · 自动保存副本 · 原文件不会被修改</span></div><div className="resume-editor-actions"><button className="editor-history-button" title="撤销（Ctrl+Z）" aria-label="撤销" onClick={undoChange} disabled={!canUndo}><Undo2 /></button><button className="editor-history-button" title="重做（Ctrl+Shift+Z 或 Ctrl+Y）" aria-label="重做" onClick={redoChange} disabled={!canRedo}><Redo2 /></button><button className="restore-resume-button" onClick={resetResumeAndRescan} disabled={scanBusy}><RefreshCw className={scanBusy ? "animate-spin" : ""} />恢复原始简历</button></div></div>
-              <div className="resume-scroll"><WordResumePreview resume={activeResume} sourceTexts={activeResume?.texts || []} currentTexts={resumeTexts} keywords={keywords} selected={selected} renderRevision={resumeRenderRevision} onReupload={() => fileRef.current?.click()} registerLayoutValidator={registerLayoutValidator} onTextChange={handleResumeTextChange} /></div>
+              <div className="resume-scroll"><WordResumePreview resume={activeResume} sourceTexts={activeResume?.texts || []} currentTexts={resumeTexts} keywords={keywords} selected={selected} renderRevision={resumeRenderRevision} onReupload={() => fileRef.current?.click()} registerLayoutValidator={registerLayoutValidator} onTextChange={handleResumeTextChange} onEditingComplete={() => setResumeRenderRevision((revision) => revision + 1)} /></div>
 
               {keywordCardOpen && selected.status === "yellow" && <aside className="suggestion-card floating-suggestion" style={{ left: popupPosition.left, top: popupPosition.top }}><div className="suggestion-top"><span className="ai-icon"><WandSparkles /></span><div><b>可直接替换</b><span>应用前会按 Word 实际行宽检查</span></div><button onClick={() => setKeywordCardOpen(false)}><X /></button></div><div className="change-preview"><span>{selected.resumeMatch}</span><span className="arrow">→</span><strong>{selected.suggestion}</strong></div>{selected.guidance && <p className="rewrite-guidance">修改指南：{selected.guidance}</p>}<div className="suggestion-actions keyword-decisions"><Button variant="ghost" onClick={() => removeKeyword(selected.id)}>不是关键词</Button><Button variant="ghost" onClick={() => updateStatus(selected.id, "ignored")}>暂时忽略</Button><Button variant="ghost" onClick={() => approveKeyword(selected.id)}>无需调整</Button><Button onClick={applyYellow}><Check />应用替换</Button></div></aside>}
               {keywordCardOpen && selected.status === "green" && <aside className="keyword-state-card matched-card floating-suggestion" style={{ left: popupPosition.left, top: popupPosition.top }}><span><Check /></span><div><b>已覆盖：{selected.label}</b><p>同一词根的词性、单复数和时态变化按覆盖处理；近义词仍列为黄色。</p></div><div className="state-card-actions"><button className="state-card-action" onClick={() => removeKeyword(selected.id)}>不是关键词</button><button className="state-card-action" onClick={() => updateStatus(selected.id, "ignored")}>暂时忽略</button></div></aside>}
@@ -1438,10 +1446,10 @@ export default function Home() {
           const before = resumeTexts[option.targetIndex] || "";
           return <button key={`${option.title}-${index}`} className="rewrite-option" onClick={() => applyRed(option)}><span className="option-number">{index + 1}</span><span className="option-copy"><span><b>{option.title}</b><em>{option.target}</em></span><div className="diff-row before"><label>修改前</label><p><DiffText before={before} after={option.text} side="before" /></p></div><div className="diff-arrow">↓</div><div className="diff-row after"><label>修改后</label><p><DiffText before={before} after={option.text} side="after" /></p></div>{option.rationale && <small className="rewrite-rationale">{option.rationale}</small>}<small>{option.originalChars && option.maxChars ? `长度：${option.originalChars} → ${option.newChars ?? option.text.length} 字符，上限 ${option.maxChars}` : "采用后会按 Word 实际行数再次检查"}</small></span><span className="apply-label">采用</span></button>;
         })}</div>}
-        {redMode !== "choices" && <div className="red-workbench"><BulletContextPanel texts={resumeTexts} target={redTarget} onTargetChange={setRedTarget} /><div className="alternative-panel">
-          {redMode === "manual" && <><button className="back-link" onClick={() => setRedMode("choices")}><ArrowLeft />返回推荐方案</button><h3>选择经历并调整</h3><p>可以写中文素材让模型生成，也可以直接写英文。模型会紧贴左侧经历，并允许有限、合理的工作方式推断。</p><PlacementToggle placement={redPlacement} original={resumeTexts[redTarget]} onChange={(placement, draft) => { setRedPlacement(placement); setManualDraft(draft); }} /><textarea value={manualDraft} onChange={(event) => setManualDraft(event.target.value)} placeholder={`补充真实素材，或直接写包含 ${selected.label} 的英文内容…`} /><div className="panel-actions"><span>{manualDraft.length} 字符</span><Button variant="outline" onClick={() => { const source = resumeTexts[redTarget]; if (source) void requestRewrite(selected, [{ text: source, index: redTarget }], manualDraft.trim(), redPlacement); }} disabled={rewriteBusy}><WandSparkles />生成推荐</Button><Button onClick={() => applyUserDraft(manualDraft)}><Check />直接写入</Button></div></>}
+        {redMode !== "choices" && <div className="red-workbench"><BulletContextPanel texts={resumeTexts} target={redTarget} onTargetChange={selectManualBullet} /><div className="alternative-panel">
+          {redMode === "manual" && <><button className="back-link" onClick={() => setRedMode("choices")}><ArrowLeft />返回推荐方案</button><h3>编辑这条经历</h3><p>右侧已带入原文。你可以直接修改，也可以输入中文素材后交给模型整理成英文。</p><textarea value={manualDraft} onChange={(event) => setManualDraft(event.target.value)} placeholder={`修改这条经历，并自然加入 ${selected.label}…`} /><div className="bullet-editor-meta"><span>原文 {resumeTexts[redTarget]?.length || 0} 字符</span><span>当前 {manualDraft.length} 字符</span><span className={manualDraft.length > (resumeTexts[redTarget]?.length || 0) ? "over" : ""}>上限 {resumeTexts[redTarget]?.length || 0} 字符</span></div><div className="panel-actions"><Button variant="outline" onClick={() => { const source = resumeTexts[redTarget]; const draft = manualDraft.trim(); if (source && draft) void requestRewrite(selected, [{ text: draft, index: redTarget, originalChars: source.length, maxChars: source.length }], "", "replace"); }} disabled={rewriteBusy || !manualDraft.trim()}>{rewriteBusy ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}{rewriteBusy ? "正在润色" : "用 LLM 润色"}</Button><Button onClick={() => applyUserDraft(manualDraft)} disabled={!manualDraft.trim()}><Check />直接写入</Button></div></>}
         </div></div>}
-        <div className="dialog-alternatives"><span>推荐不合适？</span><button onClick={() => { setRedTarget(relevantResumeLines(resumeTexts, selected.label)[0]?.index ?? 0); setRedPlacement("augment"); setManualDraft(""); setRedMode("manual"); }}><FileText />选择经历并调整</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />推断不会新增数字或成果</span></div></DialogContent></Dialog>
+        <div className="dialog-alternatives"><span>推荐不合适？</span><button onClick={openManualBulletEditor}><FileText />自己编辑这条经历</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />推断不会新增数字或成果</span></div></DialogContent></Dialog>
       <input ref={fileRef} type="file" accept=".docx" className="hidden" onChange={(event) => void handleResumeUpload(event.target.files?.[0])} />
     </main>
   );

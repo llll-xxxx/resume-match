@@ -27,7 +27,11 @@ export async function POST(request: Request) {
       if (!item || typeof item !== "object") return [];
       const index = Number((item as { index?: unknown }).index);
       const text = String((item as { text?: unknown }).text || "").trim().slice(0, 1_500);
-      return Number.isInteger(index) && index >= 0 && text ? [{ index, text, originalChars: text.length, maxChars: maxCharsFor(text) }] : [];
+      const requestedOriginalChars = Number((item as { originalChars?: unknown }).originalChars);
+      const requestedMaxChars = Number((item as { maxChars?: unknown }).maxChars);
+      const originalChars = Number.isInteger(requestedOriginalChars) && requestedOriginalChars > 0 ? Math.min(requestedOriginalChars, 1_500) : text.length;
+      const maxChars = Number.isInteger(requestedMaxChars) && requestedMaxChars > 0 ? Math.min(requestedMaxChars, 1_500) : maxCharsFor(text);
+      return Number.isInteger(index) && index >= 0 && text ? [{ index, text, originalChars, maxChars }] : [];
     }).slice(0, 5) : [];
     if (!model) return Response.json({ error: "请先选择模型" }, { status: 400 });
     if (!keyword || !jd || !candidates.length) return Response.json({ error: "关键词、职位描述或候选经历为空" }, { status: 400 });
