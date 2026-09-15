@@ -166,7 +166,6 @@ function normalizeStoredKeywords(keywords: Keyword[], lexicon: CurrentLexicon, m
 }
 
 const DEFAULT_DOC_NAME_TEMPLATE = "{projectName}";
-const DEFAULT_PDF_NAME_TEMPLATE = "Resume_Xiang Li_CBS & Haas MBA_ex-BCG_ex-Tiktok_{date}";
 
 function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim() || "resume";
@@ -564,7 +563,6 @@ export default function Home() {
   const [aiConnected, setAiConnected] = useState(false);
   const [connectedProviders, setConnectedProviders] = useState<ProviderId[]>([]);
   const [docNameTemplate, setDocNameTemplate] = useState(DEFAULT_DOC_NAME_TEMPLATE);
-  const [pdfNameTemplate, setPdfNameTemplate] = useState(DEFAULT_PDF_NAME_TEMPLATE);
   const activeResume = resumes.find((resume) => resume.id === activeResumeId);
   const resumeName = activeResume?.name || "";
   const activeProviderInfo = providerOptions.find((item) => item.id === aiProvider) || providerOptions[0];
@@ -607,7 +605,6 @@ export default function Home() {
     setAiConnected(Boolean(sessionKey && savedModel));
     setConnectedProviders(connected);
     setDocNameTemplate(window.localStorage.getItem("resume-match-doc-name-template-v1") || DEFAULT_DOC_NAME_TEMPLATE);
-    setPdfNameTemplate(window.localStorage.getItem("resume-match-pdf-name-template-v1") || DEFAULT_PDF_NAME_TEMPLATE);
     setResumeStoreReady(true);
     setProjectStoreReady(true);
     setLexiconStoreReady(true);
@@ -1385,17 +1382,13 @@ export default function Home() {
     prefetchRedRewrites(nextKeywords, jdText, originalTexts);
     showNotice("已恢复原始简历，并在本地按首次关键词重新匹配");
   }
-  function resolveExportName(template: string, extension: "docx" | "pdf", exportedNames: string[]) {
+  function resolveExportName(template: string, exportedNames: string[]) {
     const values = { projectName: projectName || "resume", company: companyName || "Company", jobTitle: jobTitle || "Role", date: localDateStamp() };
-    const normalizedTemplate = template.replace(new RegExp(`\\.(?:${extension === "docx" ? "docx?" : "pdf"})$`, "i"), "");
-    let stem = renderFileNameTemplate(normalizedTemplate, values);
-    let candidate = `${stem}.${extension}`;
-    if (exportedNames.includes(candidate) && extension === "pdf" && normalizedTemplate.includes("{date}")) {
-      stem = renderFileNameTemplate(normalizedTemplate.replace(/\{date\}/g, "{projectName}"), values);
-      candidate = `${stem}.${extension}`;
-    }
+    const normalizedTemplate = template.replace(/\.docx?$/i, "");
+    const stem = renderFileNameTemplate(normalizedTemplate, values);
+    let candidate = `${stem}.docx`;
     let copy = 2;
-    while (exportedNames.includes(candidate)) candidate = `${stem} (${copy++}).${extension}`;
+    while (exportedNames.includes(candidate)) candidate = `${stem} (${copy++}).docx`;
     return candidate;
   }
 
@@ -1413,27 +1406,6 @@ export default function Home() {
     return archive.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
   }
 
-  async function buildResumePdf() {
-    const pages = Array.from(document.querySelectorAll<HTMLElement>(".docx-preview-host section.docx"));
-    if (!pages.length) throw new Error("Word 预览尚未就绪，无法生成 PDF");
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
-    let pdf: InstanceType<typeof jsPDF> | null = null;
-    for (const page of pages) {
-      const canvas = await html2canvas(page, { scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false });
-      const orientation = canvas.width > canvas.height ? "landscape" : "portrait";
-      if (!pdf) pdf = new jsPDF({ orientation, unit: "px", format: [canvas.width, canvas.height], hotfixes: ["px_scaling"] });
-      else pdf.addPage([canvas.width, canvas.height], orientation);
-      // Keep an extractable English text layer for search and ATS parsing; the rendered
-      // Word page is then placed over it to preserve the visible layout exactly.
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(3);
-      pdf.setTextColor(255, 255, 255);
-      pdf.text(pdf.splitTextToSize(page.innerText || "", canvas.width - 8), 4, 5, { lineHeightFactor: 1 });
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.96), "JPEG", 0, 0, canvas.width, canvas.height);
-    }
-    return pdf!.output("blob");
-  }
-
   function downloadBlob(blob: Blob, name: string) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1447,14 +1419,12 @@ export default function Home() {
     setExportBusy(true);
     try {
       const exportedNames = JSON.parse(window.localStorage.getItem("resume-match-exported-names-v1") || "[]") as string[];
-      const docName = resolveExportName(docNameTemplate, "docx", exportedNames);
-      const pdfName = resolveExportName(pdfNameTemplate, "pdf", [...exportedNames, docName]);
-      const [docxBlob, pdfBlob] = await Promise.all([buildResumeDocx(), buildResumePdf()]);
+      const docName = resolveExportName(docNameTemplate, exportedNames);
+      const docxBlob = await buildResumeDocx();
       downloadBlob(docxBlob, docName);
-      downloadBlob(pdfBlob, pdfName);
-      window.localStorage.setItem("resume-match-exported-names-v1", JSON.stringify([...exportedNames, docName, pdfName].slice(-200)));
+      window.localStorage.setItem("resume-match-exported-names-v1", JSON.stringify([...exportedNames, docName].slice(-200)));
       setFinalCheckPassed(false);
-      showNotice(`已导出 ${docName} 和 ${pdfName}`);
+      showNotice(`已导出 ${docName}`);
     } catch (error) {
       showNotice(error instanceof Error ? `导出失败：${error.message}` : "导出失败，请稍后重试");
     } finally {
@@ -1516,8 +1486,7 @@ export default function Home() {
         <DialogContent className="ai-settings-dialog sm:max-w-[640px]">
           <DialogHeader><div className="ai-settings-icon"><Settings /></div><DialogTitle>设置</DialogTitle><DialogDescription>最终校对在本地完成，不调用模型。模型只用于改写建议和新增词归类。</DialogDescription></DialogHeader>
           <section className="export-settings-section"><div className="settings-section-title"><b>导出文件名</b><span>扩展名由系统自动添加</span></div><div className="ai-settings-form export-name-fields">
-            <label><span>Word 命名模板</span><input value={docNameTemplate} onChange={(event) => { const value = event.target.value; setDocNameTemplate(value); window.localStorage.setItem("resume-match-doc-name-template-v1", value); }} placeholder={DEFAULT_DOC_NAME_TEMPLATE} /><small>默认导出为“项目名.docx”。</small></label>
-            <label><span>PDF 命名模板</span><input value={pdfNameTemplate} onChange={(event) => { const value = event.target.value; setPdfNameTemplate(value); window.localStorage.setItem("resume-match-pdf-name-template-v1", value); }} placeholder={DEFAULT_PDF_NAME_TEMPLATE} /><small>可用变量：{`{projectName}`}、{`{company}`}、{`{jobTitle}`}、{`{date}`}。若日期版文件名重复，会自动改用完整项目名。</small></label>
+            <label><span>Word 命名模板</span><input value={docNameTemplate} onChange={(event) => { const value = event.target.value; setDocNameTemplate(value); window.localStorage.setItem("resume-match-doc-name-template-v1", value); }} placeholder={DEFAULT_DOC_NAME_TEMPLATE} /><small>默认导出为“项目名.docx”。可用变量：{`{projectName}`}、{`{company}`}、{`{jobTitle}`}、{`{date}`}。</small></label>
           </div></section>
           <div className="settings-divider"><span>模型服务</span></div>
           <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
@@ -1550,8 +1519,8 @@ export default function Home() {
           <div className="concept-review-footer"><span>未修改的建议会直接采用</span><Button variant="outline" onClick={() => setConceptReviewOpen(false)}>稍后处理</Button><Button onClick={confirmConceptReview}>确认并学习全部</Button></div>
         </DialogContent>
       </Dialog>
-      <Dialog open={proofreadingOpen} onOpenChange={setProofreadingOpen}><DialogContent className="proofreading-dialog sm:max-w-[720px]"><DialogHeader><DialogTitle>本地校对发现 {proofreadingIssues.length} 处需要确认</DialogTitle><DialogDescription>只检查高置信度的拼写、重复、空格、标点和占位文字，不检查 a/the、冠词选择或单复数用法。</DialogDescription></DialogHeader><div className="proofreading-list">{proofreadingIssues.map((issue) => <article key={issue.id}><div><b>{issue.message}</b><span>第 {issue.lineIndex + 1} 个文本段</span><p>{issue.excerpt}</p></div>{issue.after !== undefined ? <Button variant="outline" onClick={() => applyProofreadingIssue(issue)}>改为“{issue.after}”</Button> : <span className="manual-review-label">请人工确认</span>}</article>)}</div><div className="proofreading-actions"><Button variant="outline" onClick={() => setProofreadingOpen(false)}>返回修改</Button><Button onClick={finishProofreadingReview}>其余问题已确认，继续</Button></div></DialogContent></Dialog>
-      <Dialog open={finalCheckPassed} onOpenChange={setFinalCheckPassed}><DialogContent className="completion-dialog sm:max-w-[480px]"><div className="completion-icon"><Check /></div><DialogHeader><DialogTitle>最终检查通过</DialogTitle><DialogDescription>关键词处理和本地校对均已完成，可以导出 Word 与 PDF。</DialogDescription></DialogHeader><div className="completion-summary"><span>关键词覆盖率 <b>{score}%</b></span><span>已忽略 <b>{counts.ignored}</b></span><span>校对问题 <b>0</b></span></div><div className="completion-actions"><Button variant="outline" onClick={() => setFinalCheckPassed(false)}>返回检查</Button><Button onClick={exportResume} disabled={exportBusy}><Download />{exportBusy ? "正在生成文件…" : "导出 Word 与 PDF"}</Button></div></DialogContent></Dialog>
+      <Dialog open={proofreadingOpen} onOpenChange={setProofreadingOpen}><DialogContent className="proofreading-dialog sm:max-w-[720px]"><DialogHeader><DialogTitle>本地校对发现 {proofreadingIssues.length} 处需要确认</DialogTitle><DialogDescription>只检查正文中高置信度的拼写、重复、空格、标点和占位文字；姓名与联系方式会跳过，也不检查 a/the、冠词选择或单复数用法。</DialogDescription></DialogHeader><div className="proofreading-list">{proofreadingIssues.map((issue) => <article key={issue.id}><div><b>{issue.message}</b><span>第 {issue.lineIndex + 1} 个文本段</span><p>{issue.excerpt}</p></div>{issue.after !== undefined ? <Button variant="outline" onClick={() => applyProofreadingIssue(issue)}>改为“{issue.after}”</Button> : <span className="manual-review-label">请人工确认</span>}</article>)}</div><div className="proofreading-actions"><Button variant="outline" onClick={() => setProofreadingOpen(false)}>返回修改</Button><Button onClick={finishProofreadingReview}>其余问题已确认，继续</Button></div></DialogContent></Dialog>
+      <Dialog open={finalCheckPassed} onOpenChange={setFinalCheckPassed}><DialogContent className="completion-dialog sm:max-w-[480px]"><div className="completion-icon"><Check /></div><DialogHeader><DialogTitle>最终检查通过</DialogTitle><DialogDescription>关键词处理和本地校对均已完成，可以导出 Word 文件。</DialogDescription></DialogHeader><div className="completion-summary"><span>关键词覆盖率 <b>{score}%</b></span><span>已忽略 <b>{counts.ignored}</b></span><span>校对问题 <b>0</b></span></div><div className="completion-actions"><Button variant="outline" onClick={() => setFinalCheckPassed(false)}>返回检查</Button><Button onClick={exportResume} disabled={exportBusy}><Download />{exportBusy ? "正在生成文件…" : "导出 Word"}</Button></div></DialogContent></Dialog>
       {notice && <div className="toast"><Check />{notice}</div>}
       <Dialog open={redDialogOpen} onOpenChange={setRedDialogOpen}><DialogContent className="red-dialog gap-0 overflow-hidden border-0 p-0 sm:max-w-[1040px]"><DialogHeader className="border-b px-6 py-5"><div className="dialog-kicker"><span className="red-dot" />尚未覆盖</div><DialogTitle>怎样补入 “{selected.label}”</DialogTitle><DialogDescription>每个方案都会标出改动位置。采用前请确认内容准确反映你的真实经历。</DialogDescription></DialogHeader>
         {redMode === "choices" && <div className="option-list">{rewriteBusy ? <div className="rewrite-loading"><LoaderCircle className="animate-spin" /><b>模型正在核对经历和关键词</b><p>只有现有内容能支持的事实才会进入改写建议。</p></div> : currentSuggestions.length === 0 ? <div className="no-rewrite-candidates"><b>当前没有可安全采用的改写建议</b><p>{rewriteQuestion || "系统已排除姓名、联系方式、教育背景和栏目标题。你可以补充真实素材或自己编辑。"}</p></div> : currentSuggestions.map((option, index) => {

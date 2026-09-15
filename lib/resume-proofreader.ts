@@ -33,6 +33,14 @@ function excerpt(text: string, start: number, length: number) {
   return `${from ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`;
 }
 
+function isContactHeaderLine(text: string, lineIndex: number) {
+  if (lineIndex > 7) return false;
+  const value = text.trim();
+  const digitCount = (value.match(/\d/g) || []).length;
+  const likelyName = lineIndex === 0 && value.split(/\s+/).length <= 6 && /^[A-Za-z .'-]+$/.test(value);
+  return likelyName || /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(value) || digitCount >= 7 || /(?:linkedin|github|https?:\/\/|www\.)/i.test(value);
+}
+
 export function proofreadResume(texts: string[]): ProofreadingIssue[] {
   const issues: ProofreadingIssue[] = [];
   const add = (lineIndex: number, kind: ProofreadingIssue["kind"], message: string, text: string, start: number, length: number, before?: string, after?: string) => {
@@ -40,6 +48,9 @@ export function proofreadResume(texts: string[]): ProofreadingIssue[] {
   };
 
   texts.forEach((text, lineIndex) => {
+    // Names and contact details often use deliberate spacing for visual alignment.
+    // They are excluded from proofreading to avoid irrelevant warnings.
+    if (isContactHeaderLine(text, lineIndex)) return;
     for (const match of text.matchAll(/\b[A-Za-z][A-Za-z'-]*\b/g)) {
       const correction = COMMON_MISSPELLINGS[match[0].toLowerCase()];
       if (correction) add(lineIndex, "spelling", `可能的拼写错误：${match[0]}`, text, match.index, match[0].length, match[0], preserveCase(match[0], correction));
