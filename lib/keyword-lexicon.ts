@@ -271,28 +271,3 @@ export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   { id: "international_markets", label: "international markets", terms: ["international market", "global markets", "international growth"] },
 ];
 
-/** Flat, de-duplicated list for a one-pass, longest-term-first scanner. */
-export const KEYWORD_TERMS: readonly string[] = Array.from(
-  new Set(KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.map((term) => term.toLowerCase()))),
-).sort((left, right) => right.length - left.length || left.localeCompare(right));
-
-/** Lookup from an extracted surface term to its stable concept. */
-export const KEYWORD_CONCEPT_BY_TERM: ReadonlyMap<string, KeywordConcept> = new Map(
-  KEYWORD_CONCEPTS.flatMap((concept) => concept.terms.map((term) => [term.toLowerCase(), concept] as const)),
-);
-
-/**
- * Resolve a JD or resume surface expression through the single maintained lexicon.
- * Callers should run morphological matching first. If two expressions resolve to
- * the same concept but are not morphological variants, they are a yellow match.
- */
-export function findKeywordConcept(surfaceText: string): KeywordConcept | undefined {
-  return KEYWORD_CONCEPT_BY_TERM.get(surfaceText.trim().toLowerCase());
-}
-
-export function shareKeywordConcept(left: string, right: string): boolean {
-  const leftConcept = findKeywordConcept(left);
-  const rightConcept = findKeywordConcept(right);
-  return Boolean(leftConcept && rightConcept && leftConcept.id === rightConcept.id);
-}
-

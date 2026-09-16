@@ -7,9 +7,8 @@ import {
   sameSurfaceFamily,
   scanKnownKeywords,
   upgradeCurrentLexicon,
-} from "../lib/keyword-matcher";
-import { loadCurrentLexicon, saveCurrentLexicon } from "../lib/keyword-store";
-import { KEYWORD_CONCEPTS } from "../lib/keyword-lexicon";
+} from "../lib/keyword-matcher.ts";
+import { KEYWORD_CONCEPTS } from "../lib/keyword-lexicon.ts";
 
 const base = createCurrentLexicon();
 
@@ -147,8 +146,4 @@ const manualMatch = scanKnownKeywords(
 assert.equal(manualMatch?.status, "green");
 assert.equal(manualMatch?.source, "manual");
 
-const memory = new Map<string, string>();
-const storage = { getItem: (key: string) => memory.get(key) || null, setItem: (key: string, value: string) => { memory.set(key, value); } };
-saveCurrentLexicon(storage, learned);
-assert.equal(loadCurrentLexicon(storage).revision, learned.revision);
 console.log("keyword matcher tests passed");

@@ -1,4 +1,4 @@
-import { KEYWORD_CONCEPTS, KEYWORD_LEXICON_VERSION } from "@/lib/keyword-lexicon";
+import { KEYWORD_CONCEPTS, KEYWORD_LEXICON_VERSION } from "./keyword-lexicon.ts";
 
 export type KeywordTermSource = "base" | "manual" | "llm";
 export type CurrentKeywordTerm = { value: string; source: KeywordTermSource; addedAt?: string };
@@ -72,14 +72,7 @@ export function addTermsToCurrentLexicon(current: CurrentLexicon, input: { conce
   return { lexicon: { ...current, revision: current.revision + 1, updatedAt: timestamp, concepts }, conceptId };
 }
 
-export function relinkLearnedConcept(current: CurrentLexicon, input: { fromConceptId: string; toConceptId: string; label: string; aliases?: readonly string[] }): CurrentLexicon {
-  if (input.fromConceptId === input.toConceptId || !current.concepts.some((concept) => concept.id === input.toConceptId)) return current;
-  const linked = addTermsToCurrentLexicon(current, { conceptId: input.toConceptId, label: input.label, aliases: input.aliases, source: "llm" }).lexicon;
-  if (!input.fromConceptId.startsWith("learned_")) return linked;
-  return { ...linked, revision: linked.revision + 1, updatedAt: new Date().toISOString(), concepts: linked.concepts.filter((concept) => concept.id !== input.fromConceptId) };
-}
-
-export function morphologyStem(value: string) {
+function morphologyStem(value: string) {
   let word = value.toLowerCase();
   if (word.length <= 3) return word;
   if (/yses$/.test(word)) word = word.replace(/yses$/, "ysis");

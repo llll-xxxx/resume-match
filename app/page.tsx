@@ -3,7 +3,7 @@
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Bookmark, Check,
-  CircleHelp, Cloud, Copy, Download, FileText, FolderKanban,
+  CircleHelp, Copy, Database, Download, FileText, FolderKanban, FolderOpen, HardDrive,
   KeyRound, LayoutGrid, Link2, LoaderCircle, Pencil, Plus, RefreshCw, Settings,
   Redo2, Trash2, Undo2, Upload, WandSparkles, X,
 } from "lucide-react";
@@ -11,14 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   addTermsToCurrentLexicon, createCurrentLexicon,
-  matchConceptToResume, sameSurfaceFamily, scanKnownKeywords, surfacePattern,
+  isCurrentLexicon, matchConceptToResume, sameSurfaceFamily, scanKnownKeywords, surfacePattern, upgradeCurrentLexicon,
   type CurrentLexicon, type LocalKeywordMatch,
 } from "@/lib/keyword-matcher";
-import { loadCurrentLexicon, saveCurrentLexicon } from "@/lib/keyword-store";
+import { desktopStorage } from "@/lib/desktop-storage";
 import { applyProofreadingFix, proofreadResume, type ProofreadingIssue } from "@/lib/resume-proofreader";
 
 type KeywordStatus = "green" | "yellow" | "red" | "ignored";
-type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; rationale?: string; originalChars?: number; newChars?: number; maxChars?: number };
+type RewriteSuggestion = { title: string; text: string; target: string; targetIndex: number; originalChars?: number; newChars?: number; maxChars?: number };
 type RewriteApiData = { suggestions?: Array<Omit<RewriteSuggestion, "target">>; needsMoreEvidence?: boolean; question?: string | null; error?: string };
 type RewriteCandidate = { text: string; index: number; originalChars?: number; maxChars?: number };
 type ConceptReviewItem = { term: string; suggestedConceptId: string | null; selectedConceptId: string | null; matchedTerm: string | null; reason: string; mode: "default" | "new" | "search"; searchText: string };
@@ -39,6 +39,7 @@ type Keyword = {
   rewrites?: RewriteSuggestion[];
   needsMoreEvidence?: boolean;
   question?: string;
+  rewriteRetryUsed?: boolean;
   aliases?: string[];
   userApproved?: boolean;
   source?: "base" | "manual" | "llm";
@@ -58,11 +59,10 @@ type ApplicationProject = {
   updatedAt: string;
 };
 type ViewName = "applications" | "resumes" | "favorites" | "workspace";
+type SettingsSection = "models" | "export" | "storage";
 type ProviderId = "openai" | "gemini" | "anthropic" | "deepseek" | "glm" | "xai" | "qwen" | "muse" | "custom";
 type WebModelContext = { registerTool: (tool: { name: string; title: string; description: string; inputSchema: object; annotations: { readOnlyHint: boolean; untrustedContentHint: boolean }; execute: (input: unknown) => unknown }, options?: { signal?: AbortSignal }) => void | Promise<void> };
 
-const initialKeywords: Keyword[] = [];
-const resumeBullets: { id: string; text: string; limit: number }[] = [];
 const providerOptions: Array<{ id: ProviderId; label: string; shortLabel: string; keyUrl: string; keyHint: string }> = [
   { id: "openai", label: "OpenAI", shortLabel: "OpenAI", keyUrl: "https://platform.openai.com/api-keys", keyHint: "sk-..." },
   { id: "gemini", label: "Google Gemini", shortLabel: "Gemini", keyUrl: "https://aistudio.google.com/app/apikey", keyHint: "AIza... 或 AQ...." },
@@ -486,7 +486,7 @@ function LibraryPage({ view, onNewProject, onOpenProject, onDeleteProject, proje
     <header className="library-header"><div><span>{content.eyebrow}</span><h1>{content.title}</h1><p>{content.description}</p></div>{view === "applications" ? <Button onClick={onNewProject}><Plus />新建申请项目</Button> : view === "resumes" ? <Button onClick={onUpload}><Upload />上传 Word 简历</Button> : null}</header>
     {view === "applications" && projects.length > 0 && <div className="project-grid">{projects.map((project) => {
       const coverage = projectCoverage(project);
-      return <article key={project.id} className="project-card" role="button" tabIndex={0} onClick={() => onOpenProject(project)} onKeyDown={(event) => { if (event.key === "Enter") onOpenProject(project); }}><div><span className="company-logo">{project.companyName.charAt(0) || "J"}</span><span className="card-actions"><span className="project-status review">进行中</span><button aria-label="删除申请项目" onClick={(event) => { event.stopPropagation(); onDeleteProject(project.id); }}><Trash2 />删除</button></span></div><h3>{project.name}</h3><p>{project.jobTitle || project.companyName}</p><div className="coverage-row"><span>关键词覆盖</span><b>{coverage}%</b></div><div className="coverage-bar"><i style={{ width: `${coverage}%` }} /></div><footer><span><Cloud />本地保存</span><span>{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(project.updatedAt))}</span></footer></article>;
+      return <article key={project.id} className="project-card" role="button" tabIndex={0} onClick={() => onOpenProject(project)} onKeyDown={(event) => { if (event.key === "Enter") onOpenProject(project); }}><div><span className="company-logo">{project.companyName.charAt(0) || "J"}</span><span className="card-actions"><span className="project-status review">进行中</span><button aria-label="删除申请项目" onClick={(event) => { event.stopPropagation(); onDeleteProject(project.id); }}><Trash2 />删除</button></span></div><h3>{project.name}</h3><p>{project.jobTitle || project.companyName}</p><div className="coverage-row"><span>关键词覆盖</span><b>{coverage}%</b></div><div className="coverage-bar"><i style={{ width: `${coverage}%` }} /></div><footer><span><HardDrive />本地保存</span><span>{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(project.updatedAt))}</span></footer></article>;
     })}</div>}
     {view === "resumes" && <button className="upload-zone" onClick={onUpload}><span><Upload /></span><b>{resumes.length ? "继续上传另一份 Word 简历" : "上传第一份 Word 简历"}</b><p>支持 .docx；每次上传都会新增一个独立基础版本</p></button>}
     {resumes.length > 0 && view === "resumes" && <div className="resume-library">{resumes.map((resume) => <article key={resume.id}><div className="file-icon">DOC</div><div className="resume-card-copy">{editingId === resume.id ? <div className="rename-row"><input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && draftName.trim()) { onRenameResume(resume.id, draftName.trim()); setEditingId(""); } if (event.key === "Escape") setEditingId(""); }} /><button onClick={() => { if (draftName.trim()) onRenameResume(resume.id, draftName.trim()); setEditingId(""); }}>保存</button><button onClick={() => setEditingId("")}>取消</button></div> : <div className="resume-name-row"><h3>{resume.name}</h3><button onClick={() => { setEditingId(resume.id); setDraftName(resume.name); }}>重命名</button></div>}<p className="original-file">原文件：{resume.fileName}</p><span>{resume.uploadedAt}</span></div><div className="resume-card-actions"><button onClick={() => onUseResume(resume.id)}>用于新申请 <ArrowRight /></button><button className="danger" onClick={() => onDeleteResume(resume.id)}><Trash2 />删除</button></div></article>)}</div>}
@@ -500,12 +500,12 @@ function ProjectSetup({ resumes, activeResumeId, onSelectResume, jdUrl, setJdUrl
 
 export default function Home() {
   const [view, setView] = useState<ViewName>("applications");
-  const [keywords, setKeywords] = useState(initialKeywords);
+  const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [keywordReviewStarted, setKeywordReviewStarted] = useState(false);
   const [keywordCardOpen, setKeywordCardOpen] = useState(false);
   const [redDialogOpen, setRedDialogOpen] = useState(false);
-  const [resumeTexts, setResumeTexts] = useState(() => resumeBullets.map((b) => b.text));
+  const [resumeTexts, setResumeTexts] = useState<string[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
@@ -534,6 +534,7 @@ export default function Home() {
   const lastManualEditRef = useRef(0);
   const rewriteRequestsRef = useRef(new Map<string, Promise<RewriteApiData>>());
   const rewritePrefetchRunRef = useRef(0);
+  const rewriteRetryUsedRef = useRef(new Set<string>());
   const [resumeRenderRevision, setResumeRenderRevision] = useState(0);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -554,6 +555,7 @@ export default function Home() {
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("models");
   const [aiProvider, setAiProvider] = useState<ProviderId>("openai");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -562,76 +564,109 @@ export default function Home() {
   const [aiConnecting, setAiConnecting] = useState(false);
   const [aiConnected, setAiConnected] = useState(false);
   const [connectedProviders, setConnectedProviders] = useState<ProviderId[]>([]);
+  const [providerModels, setProviderModels] = useState<Partial<Record<ProviderId, string>>>({});
+  const [providerApiKeys, setProviderApiKeys] = useState<Partial<Record<ProviderId, string>>>({});
   const [docNameTemplate, setDocNameTemplate] = useState(DEFAULT_DOC_NAME_TEMPLATE);
+  const [exportDirectory, setExportDirectory] = useState("");
+  const [storageInfo, setStorageInfo] = useState<{ dataRoot: string; databasePath: string; defaultExportDirectory: string } | null>(null);
   const activeResume = resumes.find((resume) => resume.id === activeResumeId);
   const resumeName = activeResume?.name || "";
   const activeProviderInfo = providerOptions.find((item) => item.id === aiProvider) || providerOptions[0];
   const registerLayoutValidator = useCallback((validator: ((index: number, text: string) => boolean) | null) => { layoutValidatorRef.current = validator; }, []);
 
   useEffect(() => {
-    // Browser persistence is loaded once after hydration.
-    const saved = window.localStorage.getItem("resume-match-favorites-v2");
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setFavoriteIds(JSON.parse(saved));
-    const savedResumes = window.localStorage.getItem("resume-match-base-resumes-v1");
-    if (savedResumes) {
-      const parsed = JSON.parse(savedResumes) as ResumeVersion[];
-      setResumes(parsed);
-      if (parsed[0]) {
-        setActiveResumeId(parsed[0].id);
-        setResumeTexts([...parsed[0].texts]);
+    let cancelled = false;
+    void Promise.all([
+      desktopStorage.load<ResumeVersion, ApplicationProject>(),
+      desktopStorage.loadApiKeys(),
+    ]).then(([snapshot, storedApiKeys]) => {
+      if (cancelled) return;
+      const loadedLexicon = isCurrentLexicon(snapshot.settings.lexicon)
+        ? upgradeCurrentLexicon(snapshot.settings.lexicon)
+        : createCurrentLexicon();
+      const loadedResumes = Array.isArray(snapshot.resumes) ? snapshot.resumes : [];
+      const loadedProjects = Array.isArray(snapshot.projects) ? snapshot.projects : [];
+      const models = snapshot.settings.aiModels && typeof snapshot.settings.aiModels === "object"
+        ? snapshot.settings.aiModels as Partial<Record<ProviderId, string>>
+        : {};
+      const savedProvider = (snapshot.settings.aiProvider || "openai") as ProviderId;
+      const normalizedProvider = providerOptions.some((item) => item.id === savedProvider) ? savedProvider : "openai";
+      const keys = Object.fromEntries(providerOptions.flatMap((item) => {
+        const savedKey = storedApiKeys[item.id] || window.sessionStorage.getItem(`resume-match-ai-key-${item.id}-v1`) || "";
+        return savedKey ? [[item.id, savedKey]] : [];
+      })) as Partial<Record<ProviderId, string>>;
+      const savedKey = keys[normalizedProvider] || "";
+      const savedModel = models[normalizedProvider] || "";
+      const connected = providerOptions.filter((item) => keys[item.id] && models[item.id]).map((item) => item.id);
+      providerOptions.forEach((item) => {
+        if (!storedApiKeys[item.id] && keys[item.id]) void desktopStorage.saveApiKey(item.id, keys[item.id]!).catch(() => undefined);
+      });
+
+      setFavoriteIds(Array.isArray(snapshot.settings.favorites) ? snapshot.settings.favorites as string[] : []);
+      setResumes(loadedResumes);
+      if (loadedResumes[0]) {
+        setActiveResumeId(loadedResumes[0].id);
+        setResumeTexts([...loadedResumes[0].texts]);
       }
-    }
-    const loadedLexicon = loadCurrentLexicon(window.localStorage);
-    const savedProjects = window.localStorage.getItem("resume-match-projects-v1");
-    if (savedProjects) {
-      const parsed = JSON.parse(savedProjects) as ApplicationProject[];
-      if (Array.isArray(parsed)) setProjects(parsed.map((project) => {
+      setProjects(loadedProjects.map((project) => {
         const pendingTerms = unresolvedManualTerms(project.manualTerms || [], loadedLexicon);
         return { ...project, manualTerms: pendingTerms, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, pendingTerms) };
       }));
-    }
-    setCurrentLexicon(loadedLexicon);
-    const savedProvider = (window.localStorage.getItem("resume-match-ai-provider-v1") || "openai") as ProviderId;
-    const normalizedProvider = providerOptions.some((item) => item.id === savedProvider) ? savedProvider : "openai";
-    const sessionKey = window.sessionStorage.getItem(`resume-match-ai-key-${normalizedProvider}-v1`) || window.sessionStorage.getItem("resume-match-openai-key-v1") || "";
-    const savedModel = window.localStorage.getItem(`resume-match-ai-model-${normalizedProvider}-v1`) || window.localStorage.getItem("resume-match-openai-model-v1") || "";
-    const connected = providerOptions.filter((item) => window.sessionStorage.getItem(`resume-match-ai-key-${item.id}-v1`) && window.localStorage.getItem(`resume-match-ai-model-${item.id}-v1`)).map((item) => item.id);
-    if (sessionKey && savedModel && !connected.includes(normalizedProvider)) connected.push(normalizedProvider);
-    setAiProvider(normalizedProvider);
-    setCustomBaseUrl(window.localStorage.getItem("resume-match-ai-custom-base-url-v1") || "");
-    setApiKey(sessionKey);
-    setAiModel(savedModel);
-    setAiConnected(Boolean(sessionKey && savedModel));
-    setConnectedProviders(connected);
-    setDocNameTemplate(window.localStorage.getItem("resume-match-doc-name-template-v1") || DEFAULT_DOC_NAME_TEMPLATE);
-    setResumeStoreReady(true);
-    setProjectStoreReady(true);
-    setLexiconStoreReady(true);
+      setCurrentLexicon(loadedLexicon);
+      setProviderModels(models);
+      setProviderApiKeys(keys);
+      setAiProvider(normalizedProvider);
+      setCustomBaseUrl(typeof snapshot.settings.customBaseUrl === "string" ? snapshot.settings.customBaseUrl : "");
+      setApiKey(savedKey);
+      setAiModel(savedModel);
+      setAiConnected(Boolean(savedKey && savedModel));
+      setConnectedProviders(connected);
+      setDocNameTemplate(typeof snapshot.settings.docNameTemplate === "string" ? snapshot.settings.docNameTemplate : DEFAULT_DOC_NAME_TEMPLATE);
+      const savedExportDirectory = typeof snapshot.settings.exportDirectory === "string" ? snapshot.settings.exportDirectory : "";
+      setExportDirectory(savedExportDirectory);
+      void desktopStorage.getStorageInfo()?.then((info) => {
+        setStorageInfo(info);
+        if (!savedExportDirectory) setExportDirectory(info.defaultExportDirectory);
+      });
+      setResumeStoreReady(true);
+      setProjectStoreReady(true);
+      setLexiconStoreReady(true);
+    }).catch((error) => {
+      if (!cancelled) showNotice(error instanceof Error ? `本地数据库打开失败：${error.message}` : "本地数据库打开失败");
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!resumeStoreReady) return;
-    try {
-      window.localStorage.setItem("resume-match-base-resumes-v1", JSON.stringify(resumes));
-    } catch {
-      showNotice("浏览器存储空间不足；这份简历本次仍可使用，但请勿关闭页面");
-    }
+    desktopStorage.stageResumes(resumes);
+    const timer = window.setTimeout(() => void desktopStorage.saveResumes(resumes).catch(() => showNotice("基础简历保存失败，请稍后重试")), 200);
+    return () => window.clearTimeout(timer);
   }, [resumes, resumeStoreReady]);
 
   useEffect(() => {
     if (!projectStoreReady) return;
-    try {
-      window.localStorage.setItem("resume-match-projects-v1", JSON.stringify(projects));
-    } catch {
-      showNotice("浏览器存储空间不足；项目本次仍可使用，但请勿关闭页面");
-    }
+    desktopStorage.stageProjects(projects);
+    const timer = window.setTimeout(() => void desktopStorage.saveProjects(projects).catch(() => showNotice("申请项目保存失败，请稍后重试")), 250);
+    return () => window.clearTimeout(timer);
   }, [projectStoreReady, projects]);
 
   useEffect(() => {
     if (!lexiconStoreReady) return;
-    saveCurrentLexicon(window.localStorage, currentLexicon);
+    void desktopStorage.saveSetting("lexicon", currentLexicon);
   }, [currentLexicon, lexiconStoreReady]);
+
+  useEffect(() => {
+    if (!lexiconStoreReady) return;
+    void Promise.all([
+      desktopStorage.saveSetting("favorites", favoriteIds),
+      desktopStorage.saveSetting("aiProvider", aiProvider),
+      desktopStorage.saveSetting("aiModels", providerModels),
+      desktopStorage.saveSetting("customBaseUrl", customBaseUrl),
+      desktopStorage.saveSetting("docNameTemplate", docNameTemplate),
+      desktopStorage.saveSetting("exportDirectory", exportDirectory),
+    ]);
+  }, [aiProvider, customBaseUrl, docNameTemplate, exportDirectory, favoriteIds, lexiconStoreReady, providerModels]);
 
   useEffect(() => {
     if (!projectReady || !aiConnected || !apiKey || !aiModel) return;
@@ -785,14 +820,13 @@ export default function Home() {
     return false;
   }
   function switchProvider(provider: ProviderId) {
-    const key = window.sessionStorage.getItem(`resume-match-ai-key-${provider}-v1`) || "";
-    const model = window.localStorage.getItem(`resume-match-ai-model-${provider}-v1`) || "";
+    const key = providerApiKeys[provider] || window.sessionStorage.getItem(`resume-match-ai-key-${provider}-v1`) || "";
+    const model = providerModels[provider] || "";
     setAiProvider(provider);
     setApiKey(key);
     setAiModel(model);
     setAvailableModels([]);
     setAiConnected(Boolean(key && model));
-    window.localStorage.setItem("resume-match-ai-provider-v1", provider);
   }
   async function connectAI() {
     if (!apiKey.trim()) return showNotice(`请先填写 ${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} API Key`);
@@ -803,14 +837,24 @@ export default function Home() {
       if (!response.ok || !data.models?.length) throw new Error(data.error || "没有读取到可用模型");
       const unavailableGeminiDefault = aiProvider === "gemini" && /^gemini-2\.5-(?:flash|flash-lite|pro)$/.test(aiModel);
       const nextModel = aiModel && data.models.includes(aiModel) && !unavailableGeminiDefault ? aiModel : data.recommendedModel || data.models[0];
+      const normalizedKey = apiKey.trim();
+      let securelySaved = false;
+      try {
+        await desktopStorage.saveApiKey(aiProvider, normalizedKey);
+        securelySaved = desktopStorage.isAvailable();
+      } catch {
+        securelySaved = false;
+      }
       setAvailableModels(data.models);
       setAiModel(nextModel);
       setAiConnected(true);
       setConnectedProviders((items) => items.includes(aiProvider) ? items : [...items, aiProvider]);
-      window.sessionStorage.setItem(`resume-match-ai-key-${aiProvider}-v1`, apiKey.trim());
-      window.localStorage.setItem(`resume-match-ai-model-${aiProvider}-v1`, nextModel);
-      window.localStorage.setItem("resume-match-ai-provider-v1", aiProvider);
-      showNotice(`${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 已连接，当前模型：${nextModel}`);
+      setProviderModels((items) => ({ ...items, [aiProvider]: nextModel }));
+      setProviderApiKeys((items) => ({ ...items, [aiProvider]: normalizedKey }));
+      window.sessionStorage.setItem(`resume-match-ai-key-${aiProvider}-v1`, normalizedKey);
+      showNotice(securelySaved
+        ? `${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 已连接并安全保存，当前模型：${nextModel}`
+        : `${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 已连接，但系统未能持久保存密钥`);
     } catch (error) {
       setAiConnected(false);
       showNotice(error instanceof Error ? error.message : "模型服务连接失败");
@@ -818,23 +862,34 @@ export default function Home() {
       setAiConnecting(false);
     }
   }
-  function clearAIKey() {
+  async function clearAIKey() {
     window.sessionStorage.removeItem(`resume-match-ai-key-${aiProvider}-v1`);
+    try {
+      await desktopStorage.deleteApiKey(aiProvider);
+    } catch (error) {
+      showNotice(error instanceof Error ? `清除本地密钥失败：${error.message}` : "清除本地密钥失败");
+      return;
+    }
+    setProviderApiKeys((items) => {
+      const next = { ...items };
+      delete next[aiProvider];
+      return next;
+    });
     setApiKey("");
     setAvailableModels([]);
     setAiConnected(false);
     setConnectedProviders((items) => items.filter((item) => item !== aiProvider));
     showNotice(`已清除 ${providerOptions.find((item) => item.id === aiProvider)?.shortLabel} 的 API Key`);
   }
-  function fetchRewriteData(keyword: Keyword, candidates: RewriteCandidate[], sourceJd: string, material = "", placement: "augment" | "replace" = "augment") {
-    const reusable = !material && placement === "augment";
+  function fetchRewriteData(keyword: Keyword, candidates: RewriteCandidate[], sourceJd: string, material = "", placement: "augment" | "replace" = "augment", excludedSuggestions: string[] = []) {
+    const reusable = !material && placement === "augment" && excludedSuggestions.length === 0;
     const existing = reusable ? rewriteRequestsRef.current.get(keyword.id) : undefined;
     if (existing) return existing;
     const request = (async (): Promise<RewriteApiData> => {
       const response = await fetch("/api/llm/rewrite", {
         method: "POST",
         headers: { "content-type": "application/json", "x-llm-api-key": apiKey },
-        body: JSON.stringify({ provider: aiProvider, customBaseUrl, model: aiModel, keyword: keyword.label, jd: sourceJd, candidates, material, placement }),
+        body: JSON.stringify({ provider: aiProvider, customBaseUrl, model: aiModel, keyword: keyword.label, jd: sourceJd, candidates, material, placement, excludedSuggestions }),
       });
       const data = await response.json() as RewriteApiData;
       if (!response.ok) throw new Error(data.error || "模型改写失败");
@@ -854,7 +909,7 @@ export default function Home() {
   function prefetchRedRewrites(items: Keyword[], sourceJd: string, sourceLines: string[]) {
     const runId = ++rewritePrefetchRunRef.current;
     if (!apiKey || !aiModel) return;
-    const queue = items.filter((item) => item.status === "red" && !item.rewrites?.length);
+    const queue = items.filter((item) => item.status === "red" && (item.rewrites?.length || 0) < 3);
     let cursor = 0;
     const worker = async () => {
       while (cursor < queue.length && rewritePrefetchRunRef.current === runId) {
@@ -871,13 +926,13 @@ export default function Home() {
     };
     void Promise.all([worker(), worker()]);
   }
-  async function requestRewrite(keyword: Keyword, candidates: RewriteCandidate[], material = "", placement: "augment" | "replace" = "augment") {
+  async function requestRewrite(keyword: Keyword, candidates: RewriteCandidate[], material = "", placement: "augment" | "replace" = "augment", excludedSuggestions: string[] = []) {
     if (!requireAI()) return;
     setRewriteBusy(true);
     setRewriteQuestion("");
     setGeneratedSuggestions(null);
     try {
-      const data = await fetchRewriteData(keyword, candidates, jdText, material, placement);
+      const data = await fetchRewriteData(keyword, candidates, jdText, material, placement, excludedSuggestions);
       const suggestions = storeRewriteResult(keyword, data);
       setGeneratedSuggestions(suggestions);
       setRewriteQuestion(data.question || (data.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充一段真实经历。" : ""));
@@ -898,10 +953,10 @@ export default function Home() {
     setRewriteQuestion(keyword.question || (!keyword.rewrites ? "正在生成改写建议，请稍候。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
     setRedMode("choices");
     setRedDialogOpen(true);
-    if (candidates.length && !keyword.rewrites?.length) {
+    if (candidates.length && (keyword.rewrites?.length || 0) < 3) {
       void requestRewrite(keyword, candidates);
     }
-    if (!candidates.length && !keyword.rewrites?.length) {
+    if (!candidates.length && (keyword.rewrites?.length || 0) < 3) {
       setGeneratedSuggestions([]);
       setRewriteQuestion("没有找到适合改写的工作经历 Bullet。请先选择一条经历，或补充真实素材。");
     }
@@ -990,6 +1045,15 @@ export default function Home() {
   function renameResume(id: string, name: string) {
     setResumes((items) => items.map((item) => item.id === id ? { ...item, name } : item));
     showNotice("基础简历名称已更新");
+  }
+  function retryRewriteRecommendations() {
+    if (selected.rewriteRetryUsed || rewriteRetryUsedRef.current.has(selected.id) || rewriteBusy) return;
+    const candidates = relevantResumeLines(resumeTexts, selected.label).map(({ text, index }) => ({ text, index }));
+    if (!candidates.length) return showNotice("没有找到适合重新生成的工作经历 Bullet");
+    const previousSuggestions = currentSuggestions.map((item) => item.text);
+    rewriteRetryUsedRef.current.add(selected.id);
+    setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, rewriteRetryUsed: true } : item));
+    void requestRewrite({ ...selected, rewriteRetryUsed: true }, candidates, "", "augment", previousSuggestions);
   }
   function removeKeyword(id: string) {
     setKeywords((items) => items.filter((item) => item.id !== id));
@@ -1168,6 +1232,11 @@ export default function Home() {
     const target = relevantResumeLines(resumeTexts, selected.label)[0]?.index ?? 0;
     setRedTarget(target);
     setManualDraft(resumeTexts[target] || "");
+    setRedMode("manual");
+  }
+  function editSuggestedRewrite(option: RewriteSuggestion) {
+    setRedTarget(option.targetIndex);
+    setManualDraft(option.text);
     setRedMode("manual");
   }
   function selectManualBullet(index: number) {
@@ -1418,13 +1487,20 @@ export default function Home() {
   async function exportResume() {
     setExportBusy(true);
     try {
-      const exportedNames = JSON.parse(window.localStorage.getItem("resume-match-exported-names-v1") || "[]") as string[];
+      const exportedNames = await desktopStorage.listExportNames();
       const docName = resolveExportName(docNameTemplate, exportedNames);
       const docxBlob = await buildResumeDocx();
-      downloadBlob(docxBlob, docName);
-      window.localStorage.setItem("resume-match-exported-names-v1", JSON.stringify([...exportedNames, docName].slice(-200)));
+      let savedName = docName;
+      if (desktopStorage.isAvailable()) {
+        const result = await desktopStorage.exportDocument(exportDirectory, docName, new Uint8Array(await docxBlob.arrayBuffer()));
+        if (!result) throw new Error("本地导出接口不可用");
+        savedName = result.fileName;
+      } else {
+        downloadBlob(docxBlob, docName);
+        await desktopStorage.recordExportName(docName);
+      }
       setFinalCheckPassed(false);
-      showNotice(`已导出 ${docName}`);
+      showNotice(`已导出 ${savedName}`);
     } catch (error) {
       showNotice(error instanceof Error ? `导出失败：${error.message}` : "导出失败，请稍后重试");
     } finally {
@@ -1432,11 +1508,18 @@ export default function Home() {
     }
   }
 
+  const exportNamePreview = `${renderFileNameTemplate(docNameTemplate || DEFAULT_DOC_NAME_TEMPLATE, {
+    projectName: projectName || "项目名称",
+    company: companyName || "公司名称",
+    jobTitle: jobTitle || "职位名称",
+    date: localDateStamp(),
+  })}.docx`;
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => setView("applications")}><span className="brand-mark">R</span><span>ResumeMatch</span></button>
-        <div className="project-title">{view === "workspace" ? <><button className="icon-btn" aria-label="返回项目列表" onClick={() => setView("applications")}><ArrowLeft /></button><div><div className="title-row">{editingProjectName ? <span className="project-name-editor"><input autoFocus value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectNameDraft.trim()) { setProjectName(projectNameDraft.trim()); setEditingProjectName(false); } if (event.key === "Escape") setEditingProjectName(false); }} /><button onClick={() => { if (projectNameDraft.trim()) setProjectName(projectNameDraft.trim()); setEditingProjectName(false); }}>保存</button></span> : <><strong>{projectReady ? projectName : "新建申请项目"}</strong>{projectReady && <button className="rename-project" aria-label="重命名项目" onClick={() => { setProjectNameDraft(projectName); setEditingProjectName(true); }}><Pencil /></button>}</>}{projectReady && <span className="saved"><Cloud /> 已保存</span>}</div><span className="subtle">{resumeName ? `基于简历版本：${resumeName}` : "请先上传基础简历"}</span></div></> : <><LayoutGrid /><div><div className="title-row"><strong>{view === "applications" ? "申请项目" : view === "resumes" ? "基础简历" : "素材收藏"}</strong></div><span className="subtle">个人工作区</span></div></>}</div>
+        <div className="project-title">{view === "workspace" ? <><button className="icon-btn" aria-label="返回项目列表" onClick={() => setView("applications")}><ArrowLeft /></button><div><div className="title-row">{editingProjectName ? <span className="project-name-editor"><input autoFocus value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectNameDraft.trim()) { setProjectName(projectNameDraft.trim()); setEditingProjectName(false); } if (event.key === "Escape") setEditingProjectName(false); }} /><button onClick={() => { if (projectNameDraft.trim()) setProjectName(projectNameDraft.trim()); setEditingProjectName(false); }}>保存</button></span> : <><strong>{projectReady ? projectName : "新建申请项目"}</strong>{projectReady && <button className="rename-project" aria-label="重命名项目" onClick={() => { setProjectNameDraft(projectName); setEditingProjectName(true); }}><Pencil /></button>}</>}{projectReady && <span className="saved"><HardDrive /> 已保存到本机</span>}</div><span className="subtle">{resumeName ? `基于简历版本：${resumeName}` : "请先上传基础简历"}</span></div></> : <><LayoutGrid /><div><div className="title-row"><strong>{view === "applications" ? "申请项目" : view === "resumes" ? "基础简历" : "素材收藏"}</strong></div><span className="subtle">本机个人工作区</span></div></>}</div>
         <div className="top-actions"><Button variant="outline" className={`ai-settings-trigger ${aiConnected ? "connected" : ""}`} onClick={() => setAiSettingsOpen(true)}><Settings />设置</Button>{view === "workspace" && projectReady && <>
           <Button variant="outline" className="delete-project-button" onClick={() => deleteProject(activeProjectId)}><Trash2 />删除项目</Button>
           <Button variant="outline" onClick={() => void rescan()} disabled={scanBusy || conceptReviewBusy}><RefreshCw className={scanBusy || conceptReviewBusy ? "animate-spin" : ""} />{conceptReviewBusy ? "正在整理新增词" : scanBusy ? "匹配中" : "重新匹配"}</Button>
@@ -1483,21 +1566,50 @@ export default function Home() {
       </div>
 
       <Dialog open={aiSettingsOpen} onOpenChange={setAiSettingsOpen}>
-        <DialogContent className="ai-settings-dialog sm:max-w-[640px]">
-          <DialogHeader><div className="ai-settings-icon"><Settings /></div><DialogTitle>设置</DialogTitle><DialogDescription>最终校对在本地完成，不调用模型。模型只用于改写建议和新增词归类。</DialogDescription></DialogHeader>
-          <section className="export-settings-section"><div className="settings-section-title"><b>导出文件名</b><span>扩展名由系统自动添加</span></div><div className="ai-settings-form export-name-fields">
-            <label><span>Word 命名模板</span><input value={docNameTemplate} onChange={(event) => { const value = event.target.value; setDocNameTemplate(value); window.localStorage.setItem("resume-match-doc-name-template-v1", value); }} placeholder={DEFAULT_DOC_NAME_TEMPLATE} /><small>默认导出为“项目名.docx”。可用变量：{`{projectName}`}、{`{company}`}、{`{jobTitle}`}、{`{date}`}。</small></label>
-          </div></section>
-          <div className="settings-divider"><span>模型服务</span></div>
-          <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
-          <div className="ai-settings-form">
-            <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会后台准备红色关键词改写，并在重新匹配时整理待归类词</span></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
-            {aiProvider === "custom" && <label><span>API Base URL</span><input type="url" value={customBaseUrl} onChange={(event) => { setCustomBaseUrl(event.target.value); setAiConnected(false); window.localStorage.setItem("resume-match-ai-custom-base-url-v1", event.target.value); }} placeholder="https://provider.example.com/v1" /><small>仅支持公开的 HTTPS 地址，并按 OpenAI Chat Completions 格式调用；本机和内网地址会被拒绝。</small></label>}
-            <label><span>{activeProviderInfo.shortLabel} API Key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAiConnected(false); setConnectedProviders((items) => items.filter((item) => item !== aiProvider)); }} placeholder={activeProviderInfo.keyHint} /><small>{activeProviderInfo.keyUrl ? <>还没有密钥？前往 <a href={activeProviderInfo.keyUrl} target="_blank" rel="noreferrer">{activeProviderInfo.label} 控制台</a> 创建。各家的 API 账户和费用相互独立。</> : "请使用兼容服务商发放的 API Key。"}</small></label>
-            <div className="ai-key-actions"><Button onClick={() => void connectAI()} disabled={aiConnecting || !apiKey.trim() || (aiProvider === "custom" && !customBaseUrl.trim())}>{aiConnecting ? <LoaderCircle className="animate-spin" /> : <KeyRound />}{aiConnecting ? "正在连接…" : "验证密钥并读取模型"}</Button>{apiKey && <Button variant="outline" onClick={clearAIKey}>清除这家密钥</Button>}</div>
-            <label><span>模型 ID</span><input list="available-ai-models" value={aiModel} onChange={(event) => { setAiModel(event.target.value); setAiConnected(connectedProviders.includes(aiProvider) && Boolean(apiKey && event.target.value)); window.localStorage.setItem(`resume-match-ai-model-${aiProvider}-v1`, event.target.value); }} placeholder={availableModels.length ? "选择或输入模型 ID" : "验证密钥后读取，也可手动填写"} /><datalist id="available-ai-models">{availableModels.map((model) => <option key={model} value={model} />)}</datalist><small>{availableModels.length ? `已读取 ${availableModels.length} 个可用文本模型，可以直接输入筛选。` : "模型列表来自当前服务商；若服务商不提供列表接口，可以手动填写官方模型 ID。"}</small></label>
-            <div className={`ai-connection-state ${aiConnected ? "ok" : ""}`}><i />{aiConnected ? `当前使用：${activeProviderInfo.shortLabel} · ${aiModel}` : `尚未完成 ${activeProviderInfo.shortLabel} 配置`}</div>
-            <p className="ai-privacy-note">API Key 仅保存在当前浏览器会话中。调用时，职位描述、简历文本和你补充的素材会发送给当前选中的服务商；应用不会把密钥写入项目，也不会在调用失败时改用本地模板。</p>
+        <DialogContent className="ai-settings-dialog sm:max-w-[900px]">
+          <DialogHeader className="settings-dialog-header"><div className="ai-settings-icon"><Settings /></div><div><DialogTitle>设置</DialogTitle><DialogDescription>管理模型连接、Word 导出规则和本地数据位置。</DialogDescription></div></DialogHeader>
+          <div className="settings-layout">
+            <aside className="settings-nav" aria-label="设置分类">
+              <button className={settingsSection === "models" ? "active" : ""} onClick={() => setSettingsSection("models")}><KeyRound /><span><b>模型服务</b><small>API 与模型选择</small></span></button>
+              <button className={settingsSection === "export" ? "active" : ""} onClick={() => setSettingsSection("export")}><Download /><span><b>导出与命名</b><small>文件夹与文件名</small></span></button>
+              <button className={settingsSection === "storage" ? "active" : ""} onClick={() => setSettingsSection("storage")}><Database /><span><b>本地数据</b><small>数据库与文件位置</small></span></button>
+            </aside>
+            <section className="settings-content">
+              {settingsSection === "models" && <div className="settings-panel">
+                <div className="settings-panel-header"><div><h3>模型服务</h3><p>模型用于生成改写建议和归类新增词，最终校对仍在本地完成。</p></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
+                <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
+                <div className="ai-settings-form">
+                  <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会读取可用模型，并为当前服务商保留模型选择</span></div></div>
+                  {aiProvider === "custom" && <label><span>API Base URL</span><input type="url" value={customBaseUrl} onChange={(event) => { setCustomBaseUrl(event.target.value); setAiConnected(false); }} placeholder="https://provider.example.com/v1" /><small>仅支持公开的 HTTPS 地址，并按 OpenAI Chat Completions 格式调用；本机和内网地址会被拒绝。</small></label>}
+                  <label><span>{activeProviderInfo.shortLabel} API Key</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAiConnected(false); setConnectedProviders((items) => items.filter((item) => item !== aiProvider)); }} placeholder={activeProviderInfo.keyHint} /><small>{activeProviderInfo.keyUrl ? <>还没有密钥？前往 <a href={activeProviderInfo.keyUrl} target="_blank" rel="noreferrer">{activeProviderInfo.label} 控制台</a> 创建。各家的 API 账户和费用相互独立。</> : "请使用兼容服务商发放的 API Key。"}</small></label>
+                  <div className="ai-key-actions"><Button onClick={() => void connectAI()} disabled={aiConnecting || !apiKey.trim() || (aiProvider === "custom" && !customBaseUrl.trim())}>{aiConnecting ? <LoaderCircle className="animate-spin" /> : <KeyRound />}{aiConnecting ? "正在连接…" : "验证密钥并读取模型"}</Button>{apiKey && <Button variant="outline" onClick={clearAIKey}>清除这家密钥</Button>}</div>
+                  <label><span>模型 ID</span><input list="available-ai-models" value={aiModel} onChange={(event) => { const value = event.target.value; setAiModel(value); setProviderModels((items) => ({ ...items, [aiProvider]: value })); setAiConnected(connectedProviders.includes(aiProvider) && Boolean(apiKey && value)); }} placeholder={availableModels.length ? "选择或输入模型 ID" : "验证密钥后读取，也可手动填写"} /><datalist id="available-ai-models">{availableModels.map((model) => <option key={model} value={model} />)}</datalist><small>{availableModels.length ? `已读取 ${availableModels.length} 个可用文本模型，可以直接输入筛选。` : "模型列表来自当前服务商；若服务商不提供列表接口，可以手动填写官方模型 ID。"}</small></label>
+                  <div className={`ai-connection-state ${aiConnected ? "ok" : ""}`}><i />{aiConnected ? `当前使用：${activeProviderInfo.shortLabel} · ${aiModel}` : `尚未完成 ${activeProviderInfo.shortLabel} 配置`}</div>
+                  <p className="ai-privacy-note">API Key 由系统安全存储加密后保存在本机，不会写入项目数据库。调用时，职位描述、简历文本和你补充的素材会发送给当前选中的服务商。</p>
+                </div>
+              </div>}
+              {settingsSection === "export" && <div className="settings-panel">
+                <div className="settings-panel-header"><div><h3>导出与命名</h3><p>设置 Word 文件的默认保存位置和命名方式。</p></div></div>
+                <div className="settings-section-card ai-settings-form">
+                  <label><span>默认导出文件夹</span><div className="path-picker"><input readOnly value={exportDirectory} placeholder="使用系统默认导出文件夹" /><Button variant="outline" onClick={async () => { const selected = await desktopStorage.chooseExportDirectory(exportDirectory); if (selected) { setExportDirectory(selected); showNotice("已更新默认导出文件夹"); } }}><FolderOpen />选择文件夹</Button></div><small>导出时会直接保存到这里；文件夹不存在时会自动创建。</small></label>
+                  <div className="settings-inline-actions"><Button variant="outline" disabled={!exportDirectory} onClick={() => void desktopStorage.openPath(exportDirectory)}><FolderOpen />打开导出文件夹</Button>{storageInfo?.defaultExportDirectory && exportDirectory !== storageInfo.defaultExportDirectory && <button onClick={() => setExportDirectory(storageInfo.defaultExportDirectory)}>恢复默认位置</button>}</div>
+                </div>
+                <div className="settings-section-card ai-settings-form">
+                  <label><span>Word 命名模板</span><input value={docNameTemplate} onChange={(event) => setDocNameTemplate(event.target.value)} placeholder={DEFAULT_DOC_NAME_TEMPLATE} /><small>可用变量：{`{projectName}`}、{`{company}`}、{`{jobTitle}`}、{`{date}`}。扩展名由系统自动添加。</small></label>
+                  <div className="file-name-preview"><span>文件名预览</span><strong title={exportNamePreview}>{exportNamePreview}</strong></div>
+                  <p className="settings-hint">如果文件夹内已有同名文件，应用会自动在文件名后添加序号，不会覆盖原文件。</p>
+                </div>
+              </div>}
+              {settingsSection === "storage" && <div className="settings-panel">
+                <div className="settings-panel-header"><div><h3>本地数据</h3><p>项目、设置和简历文件都保存在当前 Windows 用户的数据目录中。</p></div></div>
+                <div className="settings-section-card storage-path-list">
+                  <div className="storage-path"><span>数据目录</span><code title={storageInfo?.dataRoot}>{storageInfo?.dataRoot || "正在读取…"}</code></div>
+                  <div className="storage-path"><span>SQLite 数据库</span><code title={storageInfo?.databasePath}>{storageInfo?.databasePath || "正在读取…"}</code></div>
+                  <div className="settings-inline-actions"><Button variant="outline" disabled={!storageInfo?.dataRoot} onClick={() => storageInfo?.dataRoot && void desktopStorage.openPath(storageInfo.dataRoot)}><FolderOpen />打开数据目录</Button></div>
+                </div>
+                <p className="storage-note"><Database />结构化数据写入 SQLite；应用管理的 Word 文件存放在数据目录的文件子目录中。卸载程序时可以保留这份目录，方便以后恢复。</p>
+              </div>}
+            </section>
           </div>
         </DialogContent>
       </Dialog>
@@ -1525,12 +1637,12 @@ export default function Home() {
       <Dialog open={redDialogOpen} onOpenChange={setRedDialogOpen}><DialogContent className="red-dialog gap-0 overflow-hidden border-0 p-0 sm:max-w-[1040px]"><DialogHeader className="border-b px-6 py-5"><div className="dialog-kicker"><span className="red-dot" />尚未覆盖</div><DialogTitle>怎样补入 “{selected.label}”</DialogTitle><DialogDescription>每个方案都会标出改动位置。采用前请确认内容准确反映你的真实经历。</DialogDescription></DialogHeader>
         {redMode === "choices" && <div className="option-list">{rewriteBusy ? <div className="rewrite-loading"><LoaderCircle className="animate-spin" /><b>模型正在核对经历和关键词</b><p>只有现有内容能支持的事实才会进入改写建议。</p></div> : currentSuggestions.length === 0 ? <div className="no-rewrite-candidates"><b>当前没有可安全采用的改写建议</b><p>{rewriteQuestion || "系统已排除姓名、联系方式、教育背景和栏目标题。你可以补充真实素材或自己编辑。"}</p></div> : currentSuggestions.map((option, index) => {
           const before = resumeTexts[option.targetIndex] || "";
-          return <button key={`${option.title}-${index}`} className="rewrite-option" onClick={() => applyRed(option)}><span className="option-number">{index + 1}</span><span className="option-copy"><span><b>{option.title}</b><em>{option.target}</em></span><div className="diff-row before"><label>修改前</label><p><DiffText before={before} after={option.text} side="before" /></p></div><div className="diff-arrow">↓</div><div className="diff-row after"><label>修改后</label><p><DiffText before={before} after={option.text} side="after" /></p></div>{option.rationale && <small className="rewrite-rationale">{option.rationale}</small>}<small>{option.originalChars && option.maxChars ? `长度：${option.originalChars} → ${option.newChars ?? option.text.length} 字符，上限 ${option.maxChars}` : "采用后会按 Word 实际行数再次检查"}</small></span><span className="apply-label">采用</span></button>;
+          return <article key={`${option.title}-${index}`} className="rewrite-option"><span className="option-number">{index + 1}</span><span className="option-copy"><span><b>{option.title}</b><em>{option.target}</em></span><div className="diff-row before"><label>修改前</label><p><DiffText before={before} after={option.text} side="before" /></p></div><div className="diff-arrow">↓</div><div className="diff-row after"><label>修改后</label><p><DiffText before={before} after={option.text} side="after" /></p></div><small>{option.originalChars && option.maxChars ? `长度：${option.originalChars} → ${option.newChars ?? option.text.length} 字符，上限 ${option.maxChars}` : "采用后会按 Word 实际行数再次检查"}</small></span><span className="option-actions"><button className="apply-option" onClick={() => applyRed(option)}>直接采用</button><button onClick={() => editSuggestedRewrite(option)}>在此之上修改</button></span></article>;
         })}</div>}
         {redMode !== "choices" && <div className="red-workbench"><BulletContextPanel texts={resumeTexts} target={redTarget} onTargetChange={selectManualBullet} /><div className="alternative-panel">
-          {redMode === "manual" && <><button className="back-link" onClick={() => setRedMode("choices")}><ArrowLeft />返回推荐方案</button><h3>编辑这条经历</h3><p>右侧已带入原文。你可以直接修改，也可以输入中文素材后交给模型整理成英文。</p><textarea value={manualDraft} onChange={(event) => setManualDraft(event.target.value)} placeholder={`修改这条经历，并自然加入 ${selected.label}…`} /><div className="bullet-editor-meta"><span>原文 {resumeTexts[redTarget]?.length || 0} 字符</span><span>当前 {manualDraft.length} 字符</span><span className={manualDraft.length > (resumeTexts[redTarget]?.length || 0) ? "over" : ""}>上限 {resumeTexts[redTarget]?.length || 0} 字符</span></div><div className="panel-actions"><Button variant="outline" onClick={() => { const source = resumeTexts[redTarget]; const draft = manualDraft.trim(); if (source && draft) void requestRewrite(selected, [{ text: draft, index: redTarget, originalChars: source.length, maxChars: source.length }], "", "replace"); }} disabled={rewriteBusy || !manualDraft.trim()}>{rewriteBusy ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}{rewriteBusy ? "正在润色" : "用 LLM 润色"}</Button><Button onClick={() => applyUserDraft(manualDraft)} disabled={!manualDraft.trim()}><Check />直接写入</Button></div></>}
+          {redMode === "manual" && <><button className="back-link" onClick={() => setRedMode("choices")}><ArrowLeft />返回推荐方案</button><h3>编辑这条经历</h3><p>文本框里已带入当前版本。你可以直接微调，也可以输入中文素材后交给模型整理成英文。</p><textarea value={manualDraft} onChange={(event) => setManualDraft(event.target.value)} placeholder={`修改这条经历，并自然加入 ${selected.label}…`} /><div className="bullet-editor-meta"><span>原文 {resumeTexts[redTarget]?.length || 0} 字符</span><span>当前 {manualDraft.length} 字符</span><span className={manualDraft.length > (resumeTexts[redTarget]?.length || 0) ? "over" : ""}>上限 {resumeTexts[redTarget]?.length || 0} 字符</span></div><div className="panel-actions"><Button variant="outline" onClick={() => { const source = resumeTexts[redTarget]; const draft = manualDraft.trim(); if (source && draft) void requestRewrite(selected, [{ text: draft, index: redTarget, originalChars: source.length, maxChars: source.length }], "", "replace"); }} disabled={rewriteBusy || !manualDraft.trim()}>{rewriteBusy ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}{rewriteBusy ? "正在润色" : "用 LLM 润色"}</Button><Button onClick={() => applyUserDraft(manualDraft)} disabled={!manualDraft.trim()}><Check />直接写入</Button></div></>}
         </div></div>}
-        <div className="dialog-alternatives"><span>推荐不合适？</span><button onClick={openManualBulletEditor}><FileText />自己编辑这条经历</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />推断不会新增数字或成果</span></div></DialogContent></Dialog>
+        <div className="dialog-alternatives"><span>推荐不合适？</span><button onClick={retryRewriteRecommendations} disabled={rewriteBusy || selected.rewriteRetryUsed}><RefreshCw />{selected.rewriteRetryUsed ? "已用过换一批" : "换一批（仅一次）"}</button><button onClick={openManualBulletEditor}><FileText />自己编辑这条经历</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />推断不会新增数字或成果</span></div></DialogContent></Dialog>
       <input ref={fileRef} type="file" accept=".docx" className="hidden" onChange={(event) => void handleResumeUpload(event.target.files?.[0])} />
     </main>
   );

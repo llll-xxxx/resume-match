@@ -1,17 +1,21 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "resume-match",
+  "productName": "ResumeMatch",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.mjs",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "install:ci": "node scripts/install-ci.mjs",
     "dev": "node scripts/run-framework.mjs dev",
+    "desktop:dev": "node scripts/electron-dev.mjs",
     "build": "node scripts/run-framework.mjs build",
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types scripts/keyword-matcher.test.ts && node --experimental-strip-types scripts/resume-proofreader.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -22,7 +26,6 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.4.0",
     "docx-preview": "^0.4.0",
-    "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "jszip": "^3.10.2",
@@ -44,14 +47,13 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
-    "@cloudflare/workers-types": "4.20260515.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
-    "drizzle-kit": "0.31.10",
+    "electron": "^44.4.0",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",

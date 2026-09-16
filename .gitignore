@@ -44,7 +44,14 @@ next-env.d.ts
 /.agents/
 /.codex/
 /outputs/
+/output/
+/\.pptx-build/
+/\.codex-finalizer/
 /work/
+
+# Local desktop data and packaged artifacts
+/.local-data-test/
+/release/
 
 # Generated Microsoft Word previews
 /.tmp_word_render/
