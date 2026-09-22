@@ -1,0 +1,35 @@
+name: Release Windows app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run desktop:build
+      - name: Create release and upload installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem release -Filter *.exe | ForEach-Object FullName
+          if (-not $assets) { throw "No Windows installer was produced." }
+          $arguments = @("release", "create", $env:GITHUB_REF_NAME, "--verify-tag", "--generate-notes", "--title", $env:GITHUB_REF_NAME)
+          if ($env:GITHUB_REF_NAME -match "-") { $arguments += "--prerelease" }
+          $arguments += $assets
+          gh @arguments

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalDatabase } from "./database.mjs";
+import { startApplicationServer } from "./server.mjs";
 
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const localAppData = process.env.LOCALAPPDATA || app.getPath("appData");
@@ -10,7 +11,8 @@ const appRoot = path.join(localAppData, "ResumeMatch");
 mkdirSync(appRoot, { recursive: true });
 app.setPath("userData", path.join(appRoot, "runtime"));
 const credentialsPath = path.join(appRoot, "api-credentials.json");
-const applicationUrl = new URL(process.env.RESUME_MATCH_DEV_URL || "http://localhost:5173/");
+let applicationUrl;
+let applicationServer;
 
 let storage;
 let mainWindow;
@@ -204,6 +206,12 @@ else {
     if (!revealMainWindow() && app.isReady()) void createWindow();
   });
   app.whenReady().then(() => {
+    return process.env.RESUME_MATCH_DEV_URL
+      ? { url: new URL(process.env.RESUME_MATCH_DEV_URL), close: async () => {} }
+      : startApplicationServer();
+  }).then((server) => {
+    applicationServer = server;
+    applicationUrl = server.url;
     storage = createLocalDatabase(path.join(appRoot, "data"));
     registerStorageHandlers();
     return createWindow();
@@ -219,5 +227,6 @@ else {
   app.on("before-quit", () => {
     try { flushStagedData(); } catch (error) { console.error("退出前保存数据失败：", error); }
     storage?.close();
+    void applicationServer?.close();
   });
 }

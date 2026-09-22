@@ -18,6 +18,14 @@ ResumeMatch 是一个本地优先的简历关键词匹配工作台。它可以�
 - npm
 - Windows 桌面版需要 Electron 支持的 Windows 版本
 
+## Windows 打包与发布
+
+```powershell
+npm run desktop:build
+```
+
+安装包会生成到 `release/`。推送形如 `v0.1.0-beta` 的 Git 标签时，GitHub Actions 会在 Windows 环境中运行测试和构建，并创建对应的预发布版本、上传 `.exe` 安装包。
+
 ## 安装与运行
 
 安装依赖：
