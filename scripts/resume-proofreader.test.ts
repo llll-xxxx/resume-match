@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { applyProofreadingFix, proofreadResume } from "../lib/resume-proofreader.ts";
+import { readFileSync } from "node:fs";
+import { applyProofreadingFix, configureProofreadingDictionary, proofreadResume } from "../lib/resume-proofreader.ts";
+
+configureProofreadingDictionary({
+  aff: readFileSync(new URL("../public/dictionaries/en/index.aff", import.meta.url)),
+  dic: readFileSync(new URL("../public/dictionaries/en/index.dic", import.meta.url)),
+});
 
 const issues = proofreadResume([
   "Xiang  Li",
@@ -14,6 +20,8 @@ assert(issues.some((issue) => issue.kind === "spacing"));
 assert(issues.some((issue) => issue.kind === "repetition"));
 assert(issues.some((issue) => issue.kind === "punctuation"));
 assert(issues.some((issue) => issue.kind === "placeholder"));
+assert(proofreadResume(["Managed cross-functional projcts and improved retention"])
+  .some((issue) => issue.kind === "spelling" && issue.before === "projcts" && issue.after === "projects"));
 assert.equal(proofreadResume(["Led a team and launched the product across markets"]).length, 0);
 assert.equal(issues.some((issue) => issue.lineIndex < 2), false);
 

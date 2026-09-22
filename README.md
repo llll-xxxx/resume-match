@@ -84,11 +84,14 @@ API Key 使用 Electron 的系统安全存储加密后保存。简历原文件�
 app/                 页面、样式和服务端 API
 components/ui/       预置的 shadcn UI 组件库
 electron/            Electron 主进程、本地数据库和预加载桥接
+features/resume-match/ ResumeMatch 的页面编排、组件、领域逻辑和类型
 lib/                 关键词匹配、模型调用、校对和桌面存储适配
 scripts/             开发、构建、测试及 Word 验证脚本
 ```
 
 `components/ui/` 中包含一组完整的预置组件，当前产品只直接使用其中一部分。其余组件作为后续界面开发的基础设施保留，不属于废弃代码。
+
+`app/page.tsx` 只保留路由入口；新增产品功能应优先放在 `features/resume-match/` 中。纯业务规则放入 `domain.ts`，共享数据结构放入 `types.ts`，独立界面放入 `components/`，避免重新把所有逻辑堆回路由文件。
 
 ## Word 页面验证
 
