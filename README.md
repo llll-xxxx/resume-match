@@ -1,116 +1,44 @@
 # ResumeMatch
 
-ResumeMatch 是一个本地优先的简历关键词匹配工作台。它可以读取 Word 简历和职位描述，检查关键词覆盖情况，辅助修改经历描述，并在尽量保留原始 Word 排版的前提下导出新版本。
+ResumeMatch 是一款 Windows 桌面应用，帮助你根据职位描述检查 Word 简历中的关键词，并在核对真实经历后导出针对该职位的简历副本。基础简历、申请项目和设置保存在本机。
 
-## 主要功能
+## 能做什么
 
-- 导入并管理多份 `.docx` 基础简历
-- 从职位链接或粘贴文本读取职位描述
-- 在本地词库中匹配职位关键词与简历证据
-- 使用自备 API Key 调用多种大模型生成改写建议
-- 对改写结果执行拼写、重复、标点和占位文字检查
-- 保留原始 Word 文档结构并导出，避免覆盖已有文件
-- 在 Electron 桌面版中使用本地 SQLite 保存项目和设置
+- 管理多份 `.docx` 基础简历，为不同职位分别创建申请项目。
+- 从职位链接读取职位描述；无法自动读取时，可以直接粘贴正文。
+- 对照职位描述和简历，标出已覆盖、需要确认及尚未覆盖的关键词。
+- 手动修改经历，或使用自己提供的模型服务 API Key 获取改写建议。采用建议前由你确认内容是否真实。
+- 检查拼写、重复、标点和占位文字，并导出尽量保留原 Word 排版的 `.docx` 文件。原始简历不会被覆盖。
 
-## 环境要求
+## 下载、安装与打开
 
-- Node.js 22.13 或更高版本
-- npm
-- Windows 桌面版需要 Electron 支持的 Windows 版本
+目前提供 Windows x64 安装包。打开 [Releases 页面](https://github.com/llll-xxxx/resume-match/releases)，选择最新版本，下载名称类似 `ResumeMatch-0.1.0-beta-Setup.exe` 的文件。`Source code` 压缩包是源代码，不是安装程序。
 
-## Windows 打包与发布
+双击下载的 `.exe`，按安装向导完成安装，然后从开始菜单或桌面上的 **ResumeMatch** 快捷方式打开应用。首次安装时，如果 Windows 提示应用未经验证，请先核对下载地址是否来自本仓库的 Release 页面；当前测试版尚未配置代码签名证书。
 
-```powershell
-npm run desktop:build
-```
+## 开始使用
 
-安装包会生成到 `release/`。推送形如 `v0.1.0-beta` 的 Git 标签时，GitHub Actions 会在 Windows 环境中运行测试和构建，并创建对应的预发布版本、上传 `.exe` 安装包。
+1. 在“基础简历”中上传一份 `.docx` 文件。每次上传都会保存为独立的基础版本。
+2. 点击“新建申请项目”，选择基础简历，粘贴职位链接或职位描述正文，再点击“读取 JD 并开始匹配”。如果网站限制自动读取，改用正文粘贴。
+3. 查看职位描述和简历中的关键词匹配结果。点击关键词，逐项确认、忽略或补充真实经历；也可以直接修改简历内容。
+4. 完成修改后点击“校对并导出”，处理校对提示，再导出 Word 文件。导出前建议在 Word 中检查最终排版。
 
-## 安装与运行
+关键词匹配和本地校对不要求 API Key。若要使用模型生成改写建议，打开“设置 → 模型服务”，选择服务商，填写自己的 API Key 并选择模型。模型服务由相应服务商提供，可能产生费用。
 
-安装依赖：
+## 文件保存在哪里
 
-```sh
-npm ci
-```
+申请项目、基础简历和设置保存在当前 Windows 用户的 `%LOCALAPPDATA%\ResumeMatch\` 目录。默认导出目录为“文档\ResumeMatch\Exports”；可以在“设置 → 导出与命名”中更改目录和文件名。导出时如遇同名文件，应用会自动添加序号，不会覆盖已有文件。
 
-启动 Windows 桌面开发版：
+API Key 经系统安全存储加密后保存在本机。只有在使用模型功能时，相关的职位描述、简历文本和补充素材才会发送给你选择的模型服务商。使用职位链接自动读取时，应用需要访问该网页。
 
-```sh
-npm run desktop:dev
-```
+## 常见问题
 
-也可以双击 `start-resume-match.cmd`。该命令会启动本地页面服务并打开桌面窗口，关闭窗口后页面服务会一并停止。
+**职位链接读取失败怎么办？** 创建项目时把职位描述正文粘贴到输入框，仍可进行匹配。
 
-仅开发浏览器界面时可以运行：
+**支持 PDF 或旧版 `.doc` 吗？** 当前基础简历仅支持 `.docx`。请先在 Word 中另存为 `.docx`。
 
-```sh
-npm run dev
-```
+**导出的文件在哪里？** 默认在“文档\ResumeMatch\Exports”。也可以从“设置 → 导出与命名”打开或更改导出文件夹。
 
-浏览器模式不会访问 Electron 的本地 SQLite、系统凭据存储和文件夹选择接口，适合界面调试，不适合作为完整桌面版替代品。
+**需要联网吗？** 从链接读取职位描述和调用模型服务时需要联网；已输入的职位文本与本地关键词匹配可以在本机处理。
 
-## 质量检查
-
-提交代码前运行：
-
-```sh
-npm run lint
-npm run typecheck
-npm test
-npm run build
-```
-
-`npm run build` 生成可由 Vinext/Cloudflare Worker 运行的生产构建。`npm start` 可在本地预览已经生成的 Worker 构建。
-
-## 本地数据
-
-桌面版数据保存在源代码目录之外：
-
-```text
-%LOCALAPPDATA%\ResumeMatch\
-├─ api-credentials.json
-├─ runtime\
-└─ data\
-   ├─ database\resume-match.sqlite3
-   └─ files\resumes\
-```
-
-API Key 使用 Electron 的系统安全存储加密后保存。简历原文件和 SQLite 数据库不会写入 Git 仓库。
-
-默认导出目录是：
-
-```text
-%USERPROFILE%\Documents\ResumeMatch\Exports
-```
-
-可以在“设置 → 导出与命名”中修改目录和文件名模板。已有文件不会被覆盖，同名文件会自动增加数字后缀。
-
-## 代码结构
-
-```text
-app/                 页面、样式和服务端 API
-components/ui/       预置的 shadcn UI 组件库
-electron/            Electron 主进程、本地数据库和预加载桥接
-features/resume-match/ ResumeMatch 的页面编排、组件、领域逻辑和类型
-lib/                 关键词匹配、模型调用、校对和桌面存储适配
-scripts/             开发、构建、测试及 Word 验证脚本
-```
-
-`components/ui/` 中包含一组完整的预置组件，当前产品只直接使用其中一部分。其余组件作为后续界面开发的基础设施保留，不属于废弃代码。
-
-`app/page.tsx` 只保留路由入口；新增产品功能应优先放在 `features/resume-match/` 中。纯业务规则放入 `domain.ts`，共享数据结构放入 `types.ts`，独立界面放入 `components/`，避免重新把所有逻辑堆回路由文件。
-
-## Word 页面验证
-
-Windows 上安装了 Microsoft Word 时，可以用 Word 自身的排版引擎验证页数：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\verify_docx_with_word.ps1 -InputPath 'D:\path\to\resume.docx'
-```
-
-如需同时生成临时 PDF 预览，可增加 `-PdfPath` 参数。脚本只读打开原文件，不会覆盖源文档。
-
-## 发布
-
-`.openai/hosting.json` 和 Sites/Vinext 构建脚本用于托管版本。发布前不要提交 `.env*`、本地运行状态、构建目录、导出文档或桌面数据库。
+这是 `v0.1.0-beta` 测试版。如果遇到问题，可在 [Issues](https://github.com/llll-xxxx/resume-match/issues) 中反馈。开发、构建和发布说明见 [开发文档](docs/DEVELOPMENT.md)。
