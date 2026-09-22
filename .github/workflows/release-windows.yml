@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -26,10 +32,11 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           $assets = Get-ChildItem release -Filter *.exe | ForEach-Object FullName
           if (-not $assets) { throw "No Windows installer was produced." }
-          $arguments = @("release", "create", $env:GITHUB_REF_NAME, "--verify-tag", "--generate-notes", "--title", $env:GITHUB_REF_NAME)
-          if ($env:GITHUB_REF_NAME -match "-") { $arguments += "--prerelease" }
+          $arguments = @("release", "create", $env:RELEASE_TAG, "--verify-tag", "--generate-notes", "--title", $env:RELEASE_TAG)
+          if ($env:RELEASE_TAG -match "-") { $arguments += "--prerelease" }
           $arguments += $assets
           gh @arguments
