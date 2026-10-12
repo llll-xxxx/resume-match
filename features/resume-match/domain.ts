@@ -1,14 +1,95 @@
-import { matchConceptToResume, sameSurfaceFamily, surfacePattern, type CurrentLexicon, type LocalKeywordMatch } from "@/lib/keyword-matcher";
-import type { ApplicationProject, Keyword } from "./types";
+import { findSurfaceMatch, matchConceptToResume, sameSurfaceFamily, surfacePattern, type CurrentLexicon, type LocalKeywordMatch } from "../../lib/keyword-matcher.ts";
+import type { ApplicationProject, ApplicationResult, ApplicationStage, BulletHistoryEntry, HistoricalRecommendation, Keyword } from "./types";
 
 export function localDateStamp() {
   const now = new Date();
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 }
 
+const COMPANY_HOST_ALIASES: Record<string, string> = {
+  "amazon.jobs": "Amazon",
+  "jobs.apple.com": "Apple",
+  "careers.microsoft.com": "Microsoft",
+  "google.com": "Google",
+  "careers.google.com": "Google",
+  "metacareers.com": "Meta",
+  "careers.tiktok.com": "TikTok",
+};
+
+export function normalizeCompanyName(rawName: string, jobUrl = "") {
+  let hostname = "";
+  try { hostname = new URL(jobUrl).hostname.toLowerCase().replace(/^www\./, ""); } catch { /* Manual records may not have a URL. */ }
+  const hostAlias = Object.entries(COMPANY_HOST_ALIASES).find(([host]) => hostname === host || hostname.endsWith(`.${host}`))?.[1];
+  if (hostAlias) return hostAlias;
+  const raw = rawName.trim().replace(/\s+/g, " ");
+  if (!raw) return "";
+  const known = [
+    [/^amazon(?:\.com)?(?:\s+(?:services|development center|data services))?(?:\s*[,.-]?\s*(?:llc|inc\.?|ltd\.?|corporation))?(?:[.\s_-]*[a-z]?\d+)?$/i, "Amazon"],
+    [/^microsoft(?:\s+corporation)?$/i, "Microsoft"],
+    [/^apple(?:\s+inc\.?)?$/i, "Apple"],
+    [/^google(?:\s+llc)?$/i, "Google"],
+    [/^meta(?:\s+platforms)?(?:,?\s+inc\.?)?$/i, "Meta"],
+  ] as const;
+  const match = known.find(([pattern]) => pattern.test(raw));
+  if (match) return match[1];
+  return raw.replace(/(?:,?\s+|\s*[.-]\s*)(?:LLC|L\.L\.C\.|Inc\.?|Ltd\.?|Limited|Corporation|Corp\.?)$/i, "").trim() || raw;
+}
+
+export function inferJobFunction(title: string, jd = "") {
+  const value = `${title}\n${jd.slice(0, 4000)}`.toLowerCase();
+  const titleOnly = title.toLowerCase();
+  if (/chief of staff|office of the (?:ceo|president)/.test(titleOnly)) return "Chief of Staff";
+  if (/corporate development|\bm&a\b|mergers? (?:and|&) acquisitions?/.test(value)) return "Corporate Development";
+  if (/product marketing|\bpmm\b/.test(value)) return "PMM";
+  if (/go[- ]to[- ]market|\bgtm\b/.test(value)) return "GTM";
+  if (/strateg(?:y|ic).*(?:operations|ops)|(?:operations|ops).*strateg/.test(titleOnly)) return "Strategy & Ops";
+  if (/business operations|\bbizops\b|\bbiz ops\b/.test(value)) return "BizOps";
+  if (/corporate strategy|strategic planning|\bstrategy\b/.test(titleOnly)) return "Strategy";
+  if (/partnerships?|partner manager/.test(titleOnly)) return "Partnerships";
+  if (/business development|\bbd\b/.test(titleOnly)) return "BD";
+  if (/program manager|program management|\btpm\b/.test(titleOnly)) return "Program Management";
+  if (/project manager|project management|\bpmo\b/.test(titleOnly)) return "Project Management";
+  if (/product manager|product management|product lead|\bpm\b/.test(titleOnly)) return "PM";
+  if (/analytics|data analyst|business analyst|data science/.test(titleOnly)) return "Analytics/Data";
+  if (/strategic finance|finance|financial planning|\bfp&a\b/.test(titleOnly)) return "Finance";
+  if (/marketing|brand manager|growth marketing/.test(titleOnly)) return "Marketing";
+  if (/sales|account executive|account manager/.test(titleOnly)) return "Sales";
+  if (/operations|operational|supply chain/.test(titleOnly)) return "Operations";
+  return "Other";
+}
+
+export function normalizeApplicationProject(project: ApplicationProject): ApplicationProject {
+  const stage: ApplicationStage = project.applicationStage || "editing";
+  const applied = ["applied", "assessment", "interview"].includes(stage);
+  const result: ApplicationResult = applied ? project.applicationResult || "in_process" : "";
+  return {
+    ...project,
+    companyName: normalizeCompanyName(project.companyName, project.jdUrl),
+    rawCompanyName: project.rawCompanyName || project.companyName,
+    jobFunction: project.jobFunction || inferJobFunction(project.jobTitle, project.jdText),
+    employmentType: project.employmentType || "",
+    location: project.location || "",
+    datePosted: project.datePosted || "",
+    deadline: project.deadline || "",
+    priority: project.priority || "",
+    applicationStage: stage,
+    applicationResult: result,
+    applicationDate: project.applicationDate || "",
+    referral: project.referral || "",
+    milestones: project.milestones || {},
+    createdAt: project.createdAt || project.updatedAt,
+  };
+}
+
+export function keywordCoverage(keywords: Keyword[]) {
+  if (!keywords.length) return 0;
+  const included = keywords.filter((keyword) => keyword.status !== "ignored");
+  if (!included.length) return 100;
+  return Math.round((included.filter((keyword) => keyword.status === "green").length / included.length) * 100);
+}
+
 export function projectCoverage(project: ApplicationProject) {
-  if (!project.keywords.length) return 0;
-  return Math.round((project.keywords.filter((keyword) => keyword.status === "green").length / project.keywords.length) * 100);
+  return keywordCoverage(project.keywords);
 }
 
 export function normalizeStoredKeywords(keywords: Keyword[], lexicon: CurrentLexicon, manualTerms: string[] = []) {
@@ -133,4 +214,45 @@ export function relevantResumeLines(texts: string[], keyword: string) {
     .filter((candidate) => isResumeBullet(candidate.text))
     .sort((a, b) => b.relevance - a.relevance || a.index - b.index)
     .slice(0, 3);
+}
+
+export function normalizeBulletText(text: string) {
+  return text.trim().replace(/\s+/g, " ").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").toLowerCase();
+}
+
+export function adaptHistoricalBullets(keyword: Keyword, history: BulletHistoryEntry[], lexicon: CurrentLexicon, resumeTexts: string[], currentResumeId?: string): HistoricalRecommendation[] {
+  if (!keyword.conceptId) return [];
+  const concept = lexicon.concepts.find((candidate) => candidate.id === keyword.conceptId);
+  const possibleTerms = Array.from(new Set([
+    ...(concept?.terms.map((term) => term.value) || []),
+    ...history.filter((entry) => entry.conceptId === keyword.conceptId).map((entry) => entry.keywordLabel),
+  ])).sort((left, right) => right.length - left.length);
+  const fallbackTarget = relevantResumeLines(resumeTexts, keyword.label)[0]?.index ?? 0;
+
+  return history
+    .filter((entry) => entry.conceptId === keyword.conceptId)
+    .sort((left, right) => right.useCount - left.useCount || right.updatedAt.localeCompare(left.updatedAt))
+    .map((entry) => {
+      const exactSourceIndex = entry.sourceText ? resumeTexts.findIndex((text) => normalizeBulletText(text) === normalizeBulletText(entry.sourceText!)) : -1;
+      const targetIndex = exactSourceIndex >= 0
+        ? exactSourceIndex
+        : entry.sourceResumeId === currentResumeId && typeof entry.sourceIndex === "number" && resumeTexts[entry.sourceIndex]
+          ? entry.sourceIndex
+          : fallbackTarget;
+      const existingCurrent = findSurfaceMatch(entry.text, keyword.label);
+      const replacedTerm = existingCurrent ? undefined : possibleTerms.find((term) => findSurfaceMatch(entry.text, term));
+      const recommendedText = existingCurrent || !replacedTerm
+        ? entry.text
+        : entry.text.replace(surfacePattern(replacedTerm), keyword.label);
+      return {
+        entry,
+        historicalText: entry.text,
+        recommendedText,
+        historicalKeyword: entry.keywordLabel,
+        currentKeyword: keyword.label,
+        targetIndex,
+        replacedTerm,
+        hasCurrentKeyword: Boolean(existingCurrent),
+      };
+    });
 }

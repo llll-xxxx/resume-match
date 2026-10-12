@@ -24,6 +24,37 @@ export type RewriteCandidate = {
   maxChars?: number;
 };
 
+export type BulletHistoryOrigin = "base" | "manual" | "llm" | "synonym";
+
+export type BulletHistoryEntry = {
+  id: string;
+  conceptId: string;
+  conceptLabel: string;
+  keywordLabel: string;
+  text: string;
+  origin: BulletHistoryOrigin;
+  sourceText?: string;
+  sourceResumeId?: string;
+  sourceIndex?: number;
+  projectId?: string;
+  companyName?: string;
+  jobTitle?: string;
+  createdAt: string;
+  updatedAt: string;
+  useCount: number;
+};
+
+export type HistoricalRecommendation = {
+  entry: BulletHistoryEntry;
+  historicalText: string;
+  recommendedText: string;
+  historicalKeyword: string;
+  currentKeyword: string;
+  targetIndex: number;
+  replacedTerm?: string;
+  hasCurrentKeyword: boolean;
+};
+
 export type ConceptReviewItem = {
   term: string;
   suggestedConceptId: string | null;
@@ -77,6 +108,12 @@ export type ResumeVersion = {
   docxBase64?: string;
 };
 
+export type ApplicationStage = "editing" | "exported" | "applied" | "assessment" | "interview";
+export type ApplicationResult = "" | "in_process" | "offer" | "rejected" | "withdrawn";
+export type ApplicationPriority = "" | "high" | "medium" | "low";
+
+export type ApplicationMilestones = Partial<Record<ApplicationStage | "in_process" | "offer" | "rejected" | "withdrawn", string>>;
+
 export type ApplicationProject = {
   id: string;
   name: string;
@@ -84,10 +121,23 @@ export type ApplicationProject = {
   jdUrl: string;
   jdText: string;
   companyName: string;
+  rawCompanyName?: string;
   jobTitle: string;
+  jobFunction?: string;
+  employmentType?: string;
+  location?: string;
+  datePosted?: string;
+  deadline?: string;
+  priority?: ApplicationPriority;
+  applicationStage?: ApplicationStage;
+  applicationResult?: ApplicationResult;
+  applicationDate?: string;
+  referral?: string;
+  milestones?: ApplicationMilestones;
   keywords: Keyword[];
   resumeTexts: string[];
   manualTerms: string[];
+  createdAt?: string;
   updatedAt: string;
 };
 

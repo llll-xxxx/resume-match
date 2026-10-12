@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 
 type JsonRecord = Record<string, unknown>;
-type ExtractedJd = { title: string; company: string; text: string };
+type ExtractedJd = {
+  title: string;
+  company: string;
+  text: string;
+  location?: string;
+  datePosted?: string;
+  deadline?: string;
+  employmentType?: string;
+};
 
 const REQUEST_HEADERS = {
   "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
@@ -68,7 +76,26 @@ function readJsonLd(html: string): ExtractedJd | undefined {
       const title = typeof job.title === "string" ? job.title.trim() : "";
       const company = typeof organization?.name === "string" ? organization.name.trim() : "";
       const description = typeof job.description === "string" ? htmlToReadableText(job.description) : "";
-      if (description.length >= 120) return { title, company, text: description };
+      const rawLocations = Array.isArray(job.jobLocation) ? job.jobLocation : job.jobLocation ? [job.jobLocation] : [];
+      const locations = rawLocations.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const address = (entry as JsonRecord).address;
+        if (!address || typeof address !== "object") return [];
+        const record = address as JsonRecord;
+        const city = typeof record.addressLocality === "string" ? record.addressLocality.trim() : "";
+        const region = typeof record.addressRegion === "string" ? record.addressRegion.trim() : "";
+        const country = typeof record.addressCountry === "string" ? record.addressCountry.trim() : "";
+        const locality = [city, region].filter(Boolean).join(", ");
+        return locality ? [locality] : country ? [country] : [];
+      });
+      const remote = String(job.jobLocationType || "").toUpperCase().includes("TELECOMMUTE");
+      const location = [...(remote ? ["Remote"] : []), ...locations].filter((value, index, values) => values.indexOf(value) === index).join("; ");
+      const rawEmployment = Array.isArray(job.employmentType) ? job.employmentType[0] : job.employmentType;
+      const employmentMap: Record<string, string> = { FULL_TIME: "Full-time", PART_TIME: "Part-time", CONTRACTOR: "Contract", TEMPORARY: "Contract", INTERN: "Internship", INTERNSHIP: "Internship" };
+      const employmentType = typeof rawEmployment === "string" ? employmentMap[rawEmployment.toUpperCase().replace(/[ -]+/g, "_")] || rawEmployment.trim() : "";
+      const datePosted = typeof job.datePosted === "string" ? job.datePosted.slice(0, 10) : "";
+      const deadline = typeof job.validThrough === "string" ? job.validThrough.slice(0, 10) : "";
+      if (description.length >= 120) return { title, company, text: description, location, datePosted, deadline, employmentType };
     } catch {
       // A malformed block should not prevent a later valid block from being used.
     }
@@ -252,6 +279,10 @@ export async function POST(request: Request) {
       text: text.slice(0, 50_000),
       title: specialized?.title || structured?.title || "",
       company: specialized?.company || structured?.company || (isAmazon ? "Amazon" : ""),
+      location: structured?.location || "",
+      datePosted: structured?.datePosted || "",
+      deadline: structured?.deadline || "",
+      employmentType: structured?.employmentType || "",
     });
   } catch (error) {
     const known = error instanceof ExtractError;

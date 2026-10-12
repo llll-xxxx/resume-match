@@ -1,4 +1,4 @@
-import type { KeywordStatus, ProviderId } from "./types";
+import type { ApplicationResult, ApplicationStage, KeywordStatus, ProviderId } from "./types";
 
 export const PROVIDER_OPTIONS: Array<{
   id: ProviderId;
@@ -26,3 +26,25 @@ export const STATUS_LABEL: Record<KeywordStatus, string> = {
 };
 
 export const DEFAULT_DOC_NAME_TEMPLATE = "{projectName}";
+
+export const DEFAULT_JOB_FUNCTIONS = [
+  "PM", "PMM", "Strategy", "Strategy & Ops", "BizOps", "Operations",
+  "BD", "Partnerships", "Marketing", "GTM", "Finance", "Corporate Development",
+  "Chief of Staff", "Program Management", "Project Management", "Analytics/Data", "Sales", "Other",
+] as const;
+
+export const APPLICATION_STAGE_LABELS: Record<ApplicationStage, string> = {
+  editing: "Editing",
+  exported: "Exported",
+  applied: "Applied",
+  assessment: "Assessment",
+  interview: "Interview",
+};
+
+export const APPLICATION_RESULT_LABELS: Record<ApplicationResult, string> = {
+  "": "",
+  in_process: "In process",
+  offer: "Offer",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+};

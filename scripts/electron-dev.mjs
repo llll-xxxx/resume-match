@@ -9,7 +9,12 @@ const require = createRequire(import.meta.url);
 const electronCommand = require("electron");
 const npmCli = process.env.npm_execpath || require.resolve("npm/bin/npm-cli.js");
 const devUrl = "http://localhost:5173/";
+const startupStartedAt = Date.now();
 let devServer;
+
+function logStartup(message) {
+  console.log(`[启动 +${((Date.now() - startupStartedAt) / 1000).toFixed(1)}s] ${message}`);
+}
 
 async function serverIsReady() {
   try {
@@ -35,15 +40,17 @@ async function waitUntilReady() {
 let desktop;
 try {
   if (!(await serverIsReady())) {
+    logStartup("启动本地开发服务");
     devServer = spawn(process.execPath, [npmCli, "run", "dev", "--", "--port", "5173", "--strictPort"], { cwd: projectRoot, stdio: "inherit", windowsHide: true });
   } else {
-    console.log(`复用本项目现有页面服务：${devUrl}`);
+    logStartup(`复用本项目现有页面服务：${devUrl}`);
   }
   await waitUntilReady();
+  logStartup("首页已返回，启动桌面窗口");
   desktop = spawn(electronCommand, ["electron/main.mjs"], {
     cwd: projectRoot,
     stdio: "inherit",
-    env: { ...process.env, RESUME_MATCH_DEV_URL: devUrl },
+    env: { ...process.env, RESUME_MATCH_DEV_URL: devUrl, RESUME_MATCH_START_TIME: String(startupStartedAt) },
   });
   const exitCode = await new Promise((resolve) => desktop.on("exit", (code) => resolve(code ?? 0)));
   process.exitCode = exitCode;

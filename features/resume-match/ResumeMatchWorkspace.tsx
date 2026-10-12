@@ -15,16 +15,15 @@ import {
   type CurrentLexicon,
 } from "@/lib/keyword-matcher";
 import { desktopStorage } from "@/lib/desktop-storage";
-import { applyProofreadingFix, loadProofreadingDictionary, proofreadResume, type ProofreadingIssue } from "@/lib/resume-proofreader";
-import { DEFAULT_DOC_NAME_TEMPLATE, PROVIDER_OPTIONS as providerOptions } from "@/features/resume-match/constants";
+import { DEFAULT_DOC_NAME_TEMPLATE, DEFAULT_JOB_FUNCTIONS, PROVIDER_OPTIONS as providerOptions } from "@/features/resume-match/constants";
 import { arrayBufferToBase64, base64ToArrayBuffer, replaceTextInWordXml } from "@/features/resume-match/docx";
 import {
-  contextForTerm, findConceptBySurface, keywordFromLocalMatch,
-  localDateStamp, normalizeStoredKeywords, projectCoverage, relevantResumeLines,
-  rematchKeywordsLocally, renderFileNameTemplate, synonymSearchConcepts, unresolvedManualTerms,
+  adaptHistoricalBullets, contextForTerm, findConceptBySurface, keywordFromLocalMatch,
+  inferJobFunction, keywordCoverage, localDateStamp, normalizeApplicationProject, normalizeCompanyName, normalizeStoredKeywords, projectCoverage, relevantResumeLines,
+  normalizeBulletText, rematchKeywordsLocally, renderFileNameTemplate, synonymSearchConcepts, unresolvedManualTerms,
 } from "@/features/resume-match/domain";
 import type {
-  ApplicationProject, ConceptReviewItem, Keyword, KeywordStatus, ProviderId,
+  ApplicationProject, ApplicationStage, BulletHistoryEntry, ConceptReviewItem, HistoricalRecommendation, Keyword, KeywordStatus, ProviderId,
   ResumeVersion, RewriteApiData, RewriteCandidate, RewriteSuggestion,
   SettingsSection, ViewName, WebModelContext,
 } from "@/features/resume-match/types";
@@ -46,7 +45,8 @@ export default function ResumeMatchWorkspace() {
   const [keywordCardOpen, setKeywordCardOpen] = useState(false);
   const [redDialogOpen, setRedDialogOpen] = useState(false);
   const [resumeTexts, setResumeTexts] = useState<string[]>([]);
-  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const [bulletHistory, setBulletHistory] = useState<BulletHistoryEntry[]>([]);
+  const [historyStoreReady, setHistoryStoreReady] = useState(false);
   const [notice, setNotice] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
   const [manualTerms, setManualTerms] = useState<string[]>([]);
@@ -59,13 +59,12 @@ export default function ResumeMatchWorkspace() {
   const [redMode, setRedMode] = useState<"choices" | "manual">("choices");
   const [redTarget, setRedTarget] = useState(0);
   const [manualDraft, setManualDraft] = useState("");
+  const [editingHistoryId, setEditingHistoryId] = useState("");
+  const [pendingHistorySave, setPendingHistorySave] = useState<{ entryId: string; text: string; sourceText: string; targetIndex: number } | null>(null);
   const [generatedSuggestions, setGeneratedSuggestions] = useState<RewriteSuggestion[] | null>(null);
   const [rewriteBusy, setRewriteBusy] = useState(false);
   const [rewriteQuestion, setRewriteQuestion] = useState("");
-  const [finalCheckBusy, setFinalCheckBusy] = useState(false);
   const [finalCheckPassed, setFinalCheckPassed] = useState(false);
-  const [proofreadingIssues, setProofreadingIssues] = useState<ProofreadingIssue[]>([]);
-  const [proofreadingOpen, setProofreadingOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const layoutValidatorRef = useRef<((index: number, text: string) => boolean) | null>(null);
@@ -82,6 +81,7 @@ export default function ResumeMatchWorkspace() {
   const [activeResumeId, setActiveResumeId] = useState("");
   const [resumeStoreReady, setResumeStoreReady] = useState(false);
   const [projects, setProjects] = useState<ApplicationProject[]>([]);
+  const [jobFunctions, setJobFunctions] = useState<string[]>([...DEFAULT_JOB_FUNCTIONS]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [projectStoreReady, setProjectStoreReady] = useState(false);
   const [jdUrl, setJdUrl] = useState("");
@@ -142,7 +142,7 @@ export default function ResumeMatchWorkspace() {
         if (!storedApiKeys[item.id] && keys[item.id]) void desktopStorage.saveApiKey(item.id, keys[item.id]!).catch(() => undefined);
       });
 
-      setFavoriteIds(Array.isArray(snapshot.settings.favorites) ? snapshot.settings.favorites as string[] : []);
+      setBulletHistory(Array.isArray(snapshot.bulletHistory) ? snapshot.bulletHistory as BulletHistoryEntry[] : []);
       setResumes(loadedResumes);
       if (loadedResumes[0]) {
         setActiveResumeId(loadedResumes[0].id);
@@ -150,8 +150,10 @@ export default function ResumeMatchWorkspace() {
       }
       setProjects(loadedProjects.map((project) => {
         const pendingTerms = unresolvedManualTerms(project.manualTerms || [], loadedLexicon);
-        return { ...project, manualTerms: pendingTerms, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, pendingTerms) };
+        return normalizeApplicationProject({ ...project, manualTerms: pendingTerms, keywords: normalizeStoredKeywords(project.keywords || [], loadedLexicon, pendingTerms) });
       }));
+      const savedJobFunctions = Array.isArray(snapshot.settings.jobFunctions) ? snapshot.settings.jobFunctions.filter((value): value is string => typeof value === "string" && Boolean(value.trim())) : [];
+      setJobFunctions(Array.from(new Set([...DEFAULT_JOB_FUNCTIONS, ...savedJobFunctions])));
       setCurrentLexicon(loadedLexicon);
       setProviderModels(models);
       setProviderApiKeys(keys);
@@ -171,6 +173,7 @@ export default function ResumeMatchWorkspace() {
       setResumeStoreReady(true);
       setProjectStoreReady(true);
       setLexiconStoreReady(true);
+      setHistoryStoreReady(true);
     }).catch((error) => {
       if (!cancelled) showNotice(error instanceof Error ? `本地数据库打开失败：${error.message}` : "本地数据库打开失败");
     });
@@ -192,6 +195,13 @@ export default function ResumeMatchWorkspace() {
   }, [projectStoreReady, projects]);
 
   useEffect(() => {
+    if (!historyStoreReady) return;
+    desktopStorage.stageBulletHistory(bulletHistory);
+    const timer = window.setTimeout(() => void desktopStorage.saveBulletHistory(bulletHistory).catch(() => showNotice("Bullet 素材库保存失败，请稍后重试")), 200);
+    return () => window.clearTimeout(timer);
+  }, [bulletHistory, historyStoreReady]);
+
+  useEffect(() => {
     if (!lexiconStoreReady) return;
     void desktopStorage.saveSetting("lexicon", currentLexicon);
   }, [currentLexicon, lexiconStoreReady]);
@@ -199,14 +209,14 @@ export default function ResumeMatchWorkspace() {
   useEffect(() => {
     if (!lexiconStoreReady) return;
     void Promise.all([
-      desktopStorage.saveSetting("favorites", favoriteIds),
       desktopStorage.saveSetting("aiProvider", aiProvider),
       desktopStorage.saveSetting("aiModels", providerModels),
       desktopStorage.saveSetting("customBaseUrl", customBaseUrl),
       desktopStorage.saveSetting("docNameTemplate", docNameTemplate),
       desktopStorage.saveSetting("exportDirectory", exportDirectory),
+      desktopStorage.saveSetting("jobFunctions", jobFunctions),
     ]);
-  }, [aiProvider, customBaseUrl, docNameTemplate, exportDirectory, favoriteIds, lexiconStoreReady, providerModels]);
+  }, [aiProvider, customBaseUrl, docNameTemplate, exportDirectory, jobFunctions, lexiconStoreReady, providerModels]);
 
   useEffect(() => {
     if (!projectReady || !aiConnected || !apiKey || !aiModel) return;
@@ -243,6 +253,41 @@ export default function ResumeMatchWorkspace() {
       return changed ? next : items;
     });
   }, [currentLexicon, projectReady, resumeTexts]);
+
+  useEffect(() => {
+    if (!historyStoreReady || !projectReady || !activeResume) return;
+    const timestamp = new Date().toISOString();
+    const additions = keywords.flatMap((keyword) => {
+      if (!keyword.conceptId) return [];
+      const concept = currentLexicon.concepts.find((candidate) => candidate.id === keyword.conceptId);
+      if (!concept) return [];
+      const match = matchConceptToResume(keyword.label, concept, activeResume.texts);
+      if (!match.resumeMatch) return [];
+      const sourceIndex = activeResume.texts.findIndex((text) => text.toLowerCase().includes(match.resumeMatch!.toLowerCase()));
+      if (sourceIndex < 0) return [];
+      const text = activeResume.texts[sourceIndex];
+      return [{
+        id: `bullet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conceptId: keyword.conceptId,
+        conceptLabel: concept.label,
+        keywordLabel: keyword.label,
+        text,
+        origin: "base" as const,
+        sourceText: text,
+        sourceResumeId: activeResume.id,
+        sourceIndex,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        useCount: 0,
+      }];
+    });
+    if (!additions.length) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- index newly encountered base bullets in the local history library
+    setBulletHistory((items) => {
+      const unique = additions.filter((addition) => !items.some((item) => item.conceptId === addition.conceptId && normalizeBulletText(item.text) === normalizeBulletText(addition.text)));
+      return unique.length ? [...unique, ...items] : items;
+    });
+  }, [activeResume, currentLexicon, historyStoreReady, keywords, projectReady]);
 
   useEffect(() => {
     if (!projectStoreReady || !projectReady || activeProjectId || !projectName) return;
@@ -295,15 +340,16 @@ export default function ResumeMatchWorkspace() {
     return () => lifecycle.abort();
   }, [keywords]);
 
-  const selected = keywords.find((item) => item.id === selectedId) ?? keywords[0] ?? { id: "", label: "", status: "green" as const };
+  const selected = useMemo(() => keywords.find((item) => item.id === selectedId) ?? keywords[0] ?? { id: "", label: "", status: "green" as const }, [keywords, selectedId]);
   const currentSuggestions = generatedSuggestions ?? [];
+  const historicalRecommendations = useMemo(() => adaptHistoricalBullets(selected, bulletHistory, currentLexicon, resumeTexts, activeResumeId), [activeResumeId, bulletHistory, currentLexicon, resumeTexts, selected]);
   const counts = useMemo(() => ({
     green: keywords.filter((k) => k.status === "green").length,
     yellow: keywords.filter((k) => k.status === "yellow").length,
     red: keywords.filter((k) => k.status === "red").length,
     ignored: keywords.filter((k) => k.status === "ignored").length,
   }), [keywords]);
-  const score = keywords.length ? Math.round((counts.green / keywords.length) * 100) : 0;
+  const score = keywordCoverage(keywords);
   const selectedIndex = keywords.findIndex((item) => item.id === selected.id);
   const unresolvedElsewhere = keywords.some((item, index) => index !== selectedIndex && (item.status === "yellow" || item.status === "red"));
   const nextActionLabel = !keywordReviewStarted ? "查看第一个关键词" : selected.status === "red" ? "处理当前缺失项" : selectedIndex === keywords.length - 1 ? unresolvedElsewhere ? "查看未处理项" : "开始最终检查" : selected.status === "yellow" ? "应用并继续" : "下一个关键词";
@@ -449,7 +495,7 @@ export default function ResumeMatchWorkspace() {
   function prefetchRedRewrites(items: Keyword[], sourceJd: string, sourceLines: string[]) {
     const runId = ++rewritePrefetchRunRef.current;
     if (!apiKey || !aiModel) return;
-    const queue = items.filter((item) => item.status === "red" && (item.rewrites?.length || 0) < 3);
+    const queue = items.filter((item) => item.status === "red" && (item.rewrites?.length || 0) < 3 && !bulletHistory.some((entry) => entry.conceptId === item.conceptId));
     let cursor = 0;
     const worker = async () => {
       while (cursor < queue.length && rewritePrefetchRunRef.current === runId) {
@@ -471,6 +517,8 @@ export default function ResumeMatchWorkspace() {
     setRewriteBusy(true);
     setRewriteQuestion("");
     setGeneratedSuggestions(null);
+    setEditingHistoryId("");
+    setPendingHistorySave(null);
     try {
       const data = await fetchRewriteData(keyword, candidates, jdText, material, placement, excludedSuggestions);
       const suggestions = storeRewriteResult(keyword, data);
@@ -488,18 +536,26 @@ export default function ResumeMatchWorkspace() {
   }
   function loadRewriteSuggestions(keyword: Keyword) {
     const candidates = relevantResumeLines(resumeTexts, keyword.label).map(({ text, index }) => ({ text, index }));
+    const history = adaptHistoricalBullets(keyword, bulletHistory, currentLexicon, resumeTexts, activeResumeId);
     setRedTarget(candidates[0]?.index ?? 0);
     setGeneratedSuggestions(keyword.rewrites || []);
-    setRewriteQuestion(keyword.question || (!keyword.rewrites ? "正在生成改写建议，请稍候。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
+    setRewriteQuestion(history.length ? `找到 ${history.length} 条同概念历史记录` : keyword.question || (!keyword.rewrites ? "正在生成改写建议，请稍候。" : keyword.needsMoreEvidence ? "现有简历没有足够证据支持这项要求，请补充真实素材。" : ""));
     setRedMode("choices");
     setRedDialogOpen(true);
-    if (candidates.length && (keyword.rewrites?.length || 0) < 3) {
+    setEditingHistoryId("");
+    if (!history.length && candidates.length && (keyword.rewrites?.length || 0) < 3) {
       void requestRewrite(keyword, candidates);
     }
-    if (!candidates.length && (keyword.rewrites?.length || 0) < 3) {
+    if (!history.length && !candidates.length && (keyword.rewrites?.length || 0) < 3) {
       setGeneratedSuggestions([]);
       setRewriteQuestion("没有找到适合改写的工作经历 Bullet。请先选择一条经历，或补充真实素材。");
     }
+  }
+
+  function requestNewRewriteSuggestions() {
+    const candidates = relevantResumeLines(resumeTexts, selected.label).map(({ text, index }) => ({ text, index }));
+    if (!candidates.length) return showNotice("没有找到适合改写的工作经历 Bullet");
+    void requestRewrite(selected, candidates);
   }
   async function handleResumeUpload(file?: File) {
     if (!file) return;
@@ -548,6 +604,8 @@ export default function ResumeMatchWorkspace() {
     setKeywordCardOpen(false);
     setManualTerms([]);
     setGeneratedSuggestions(null);
+    setEditingHistoryId("");
+    setPendingHistorySave(null);
     setRedDialogOpen(false);
     setFinalCheckPassed(false);
     setView("workspace");
@@ -573,6 +631,8 @@ export default function ResumeMatchWorkspace() {
     setKeywordCardOpen(false);
     setManualTerms(pendingTerms);
     setGeneratedSuggestions(null);
+    setEditingHistoryId("");
+    setPendingHistorySave(null);
     setRedDialogOpen(false);
     setFinalCheckPassed(false);
     setProjectReady(true);
@@ -607,6 +667,59 @@ export default function ResumeMatchWorkspace() {
     setRedDialogOpen(false);
     showNotice("已按你的判断标记为无需调整");
   }
+  function updateApplicationProject(id: string, patch: Partial<ApplicationProject>) {
+    setProjects((items) => items.map((project) => {
+      if (project.id !== id) return project;
+      const next = { ...project, ...patch };
+      const timestamp = new Date().toISOString();
+      const date = timestamp.slice(0, 10);
+      if (patch.applicationStage) {
+        const applied = ["applied", "assessment", "interview"].includes(patch.applicationStage);
+        next.applicationResult = applied ? next.applicationResult || "in_process" : "";
+        next.applicationDate = applied ? next.applicationDate || date : "";
+        next.milestones = { ...(next.milestones || {}), [patch.applicationStage]: next.milestones?.[patch.applicationStage] || timestamp };
+        if (applied) {
+          const reachedStages: ApplicationStage[] = patch.applicationStage === "interview" ? ["applied", "assessment", "interview"] : patch.applicationStage === "assessment" ? ["applied", "assessment"] : ["applied"];
+          next.milestones = reachedStages.reduce((milestones, stage) => ({ ...milestones, [stage]: milestones[stage] || timestamp }), next.milestones);
+        }
+      }
+      if (patch.applicationResult) next.milestones = { ...(next.milestones || {}), [patch.applicationResult]: next.milestones?.[patch.applicationResult] || timestamp };
+      next.updatedAt = timestamp;
+      return next;
+    }));
+  }
+  function addManualProject() {
+    const timestamp = new Date().toISOString();
+    const id = `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const project: ApplicationProject = {
+      id,
+      name: `${localDateStamp()}_Manual application`,
+      resumeId: activeResumeId || resumes[0]?.id || "",
+      jdUrl: "",
+      jdText: "",
+      companyName: "",
+      rawCompanyName: "",
+      jobTitle: "",
+      jobFunction: "Other",
+      employmentType: "",
+      location: "",
+      datePosted: "",
+      deadline: "",
+      priority: "",
+      applicationStage: "editing",
+      applicationResult: "",
+      applicationDate: "",
+      referral: "",
+      milestones: { editing: timestamp },
+      keywords: [],
+      resumeTexts: resumes.find((resume) => resume.id === (activeResumeId || resumes[0]?.id))?.texts || [],
+      manualTerms: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    setProjects((items) => [...items, project]);
+    showNotice("已新增空白申请记录，可直接在表格中填写");
+  }
   function deleteProject(id: string) {
     const project = projects.find((item) => item.id === id);
     if (!project || !window.confirm(`确定删除申请项目“${project.name}”吗？此操作无法撤销。`)) return;
@@ -631,6 +744,12 @@ export default function ResumeMatchWorkspace() {
       setResumeTexts(remaining[0] ? [...remaining[0].texts] : []);
     }
     showNotice("基础简历已删除");
+  }
+  function deleteBulletHistory(id: string) {
+    const entry = bulletHistory.find((item) => item.id === id);
+    if (!entry || !window.confirm(`确定删除“${entry.keywordLabel}”下的这条 Bullet 历史记录吗？`)) return;
+    setBulletHistory((items) => items.filter((item) => item.id !== id));
+    showNotice("已删除这条历史记录");
   }
   function rememberUndo() {
     undoStackRef.current.push({ texts: [...resumeTexts], keywords: keywords.map((item) => ({ ...item })) });
@@ -690,18 +809,28 @@ export default function ResumeMatchWorkspace() {
       let content = jdText.trim();
       let extractedTitle = "";
       let extractedCompany = "";
+      let extractedLocation = "";
+      let extractedDatePosted = "";
+      let extractedDeadline = "";
+      let extractedEmploymentType = "";
       if (!content && jdUrl.trim()) {
         const response = await fetch("/api/extract-jd", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: jdUrl.trim() }) });
-        const data = await response.json() as { text?: string; title?: string; company?: string; error?: string };
+        const data = await response.json() as { text?: string; title?: string; company?: string; location?: string; datePosted?: string; deadline?: string; employmentType?: string; error?: string };
         if (!response.ok || !data.text) throw new Error(data.error || "无法读取网页");
         content = data.text;
         extractedTitle = data.title?.trim() || "";
         extractedCompany = data.company?.trim() || "";
+        extractedLocation = data.location?.trim() || "";
+        extractedDatePosted = data.datePosted?.trim() || "";
+        extractedDeadline = data.deadline?.trim() || "";
+        extractedEmploymentType = data.employmentType?.trim() || "";
         setJdText(content);
       }
       if (!extractedTitle) extractedTitle = content.split(/\n+/).find((line) => line.trim().length > 4)?.trim().slice(0, 90) || "New Role";
       if (!extractedCompany && jdUrl.trim()) extractedCompany = new URL(jdUrl.trim()).hostname.replace(/^www\./, "").split(".")[0].replace(/^./, (letter) => letter.toUpperCase());
       if (!extractedCompany) extractedCompany = "Company";
+      const rawCompanyName = extractedCompany;
+      extractedCompany = normalizeCompanyName(extractedCompany, jdUrl.trim()) || "Company";
       const generatedName = `${localDateStamp()}_${extractedCompany}_${extractedTitle}`;
       setCompanyName(extractedCompany);
       setJobTitle(extractedTitle);
@@ -713,6 +842,7 @@ export default function ResumeMatchWorkspace() {
       setKeywordReviewStarted(false);
       setKeywordCardOpen(false);
       const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const createdAt = new Date().toISOString();
       const project: ApplicationProject = {
         id: projectId,
         name: generatedName,
@@ -720,13 +850,26 @@ export default function ResumeMatchWorkspace() {
         jdUrl: jdUrl.trim(),
         jdText: content,
         companyName: extractedCompany,
+        rawCompanyName,
         jobTitle: extractedTitle,
+        jobFunction: inferJobFunction(extractedTitle, content),
+        employmentType: extractedEmploymentType,
+        location: extractedLocation,
+        datePosted: extractedDatePosted,
+        deadline: extractedDeadline,
+        priority: "",
+        applicationStage: "editing",
+        applicationResult: "",
+        applicationDate: "",
+        referral: "",
+        milestones: { editing: createdAt },
         keywords: nextKeywords,
         resumeTexts: [...resumeTexts],
         manualTerms: [],
-        updatedAt: new Date().toISOString(),
+        createdAt,
+        updatedAt: createdAt,
       };
-      setProjects((items) => [project, ...items]);
+      setProjects((items) => [...items, project]);
       setActiveProjectId(projectId);
       setProjectReady(true);
       prefetchRedRewrites(nextKeywords, content, resumeTexts);
@@ -737,6 +880,33 @@ export default function ResumeMatchWorkspace() {
       setProjectLoading(false);
     }
   }
+  function recordBulletHistory(keyword: Keyword, text: string, input: { sourceText?: string; sourceIndex?: number; origin: BulletHistoryEntry["origin"]; incrementUse?: boolean }) {
+    if (!keyword.conceptId || !text.trim()) return;
+    const timestamp = new Date().toISOString();
+    const conceptLabel = currentLexicon.concepts.find((concept) => concept.id === keyword.conceptId)?.label || keyword.label;
+    setBulletHistory((items) => {
+      const duplicate = items.find((item) => item.conceptId === keyword.conceptId && normalizeBulletText(item.text) === normalizeBulletText(text));
+      if (duplicate) return items.map((item) => item.id === duplicate.id ? { ...item, keywordLabel: keyword.label, updatedAt: timestamp, useCount: item.useCount + (input.incrementUse ? 1 : 0) } : item);
+      return [{
+        id: `bullet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conceptId: keyword.conceptId!,
+        conceptLabel,
+        keywordLabel: keyword.label,
+        text: text.trim(),
+        origin: input.origin,
+        sourceText: input.sourceText,
+        sourceResumeId: activeResumeId || undefined,
+        sourceIndex: input.sourceIndex,
+        projectId: activeProjectId || undefined,
+        companyName: companyName || undefined,
+        jobTitle: jobTitle || undefined,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        useCount: input.incrementUse ? 1 : 0,
+      }, ...items];
+    });
+  }
+
   function applyYellow() {
     if (!selected.resumeMatch || !selected.suggestion) return;
     const targetIndex = selected.yellowEdit?.targetIndex ?? resumeTexts.findIndex((text) => text.includes(selected.resumeMatch!));
@@ -748,6 +918,7 @@ export default function ResumeMatchWorkspace() {
       return text.replace(selected.resumeMatch!, selected.suggestion!);
     }));
     setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, status: "green", resumeMatch: selected.suggestion, suggestion: undefined } : item));
+    recordBulletHistory(selected, afterText, { sourceText: resumeTexts[targetIndex], sourceIndex: targetIndex, origin: "synonym", incrementUse: true });
     showNotice(`已应用长度受控的英文修改：${selected.yellowEdit?.newChars ?? selected.suggestion.length} 个字符`);
   }
   function applyRed(option: RewriteSuggestion) {
@@ -755,6 +926,7 @@ export default function ResumeMatchWorkspace() {
     rememberUndo();
     setResumeTexts((texts) => texts.map((text, index) => index === option.targetIndex ? option.text : text));
     setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, status: "green", resumeMatch: selected.label } : item));
+    recordBulletHistory(selected, option.text, { sourceText: resumeTexts[option.targetIndex], sourceIndex: option.targetIndex, origin: "llm", incrementUse: true });
     setRedDialogOpen(false);
     showNotice(`已补入 “${selected.label}”，本地匹配已更新`);
   }
@@ -762,29 +934,103 @@ export default function ResumeMatchWorkspace() {
     if (!text.trim()) return showNotice("请先填写真实经历");
     const finalText = text.trim();
     if (!fitsOriginalLayout(redTarget, finalText)) return;
+    const nextTexts = resumeTexts.map((item, index) => index === redTarget ? finalText : item);
+    const concept = currentLexicon.concepts.find((candidate) => candidate.id === selected.conceptId)
+      || { id: selected.conceptId || selected.id, label: selected.label, terms: [{ value: selected.label, source: "manual" as const }] };
+    const match = matchConceptToResume(selected.label, concept, nextTexts);
     rememberUndo();
-    setResumeTexts((texts) => texts.map((item, index) => index === redTarget ? finalText : item));
-    setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, status: finalText.toLowerCase().includes(selected.label.toLowerCase()) ? "green" : "yellow", resumeMatch: selected.label } : item));
+    setResumeTexts(nextTexts);
+    setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, ...match } : item));
     setRedDialogOpen(false);
+    if (editingHistoryId) {
+      const historical = bulletHistory.find((entry) => entry.id === editingHistoryId);
+      if (historical && normalizeBulletText(historical.text) !== normalizeBulletText(finalText)) {
+        setPendingHistorySave({ entryId: editingHistoryId, text: finalText, sourceText: resumeTexts[redTarget] || "", targetIndex: redTarget });
+      } else if (historical) {
+        setBulletHistory((items) => items.map((item) => item.id === historical.id ? { ...item, useCount: item.useCount + 1, updatedAt: new Date().toISOString() } : item));
+      }
+    } else {
+      recordBulletHistory(selected, finalText, { sourceText: resumeTexts[redTarget], sourceIndex: redTarget, origin: "manual", incrementUse: true });
+    }
+    setEditingHistoryId("");
     showNotice("已写入指定经历，并完成本地匹配");
   }
   function openManualBulletEditor() {
     const target = relevantResumeLines(resumeTexts, selected.label)[0]?.index ?? 0;
     setRedTarget(target);
     setManualDraft(resumeTexts[target] || "");
+    setEditingHistoryId("");
     setRedMode("manual");
   }
   function editSuggestedRewrite(option: RewriteSuggestion) {
     setRedTarget(option.targetIndex);
     setManualDraft(option.text);
+    setEditingHistoryId("");
     setRedMode("manual");
+  }
+  function editHistoricalRecommendation(option: HistoricalRecommendation, text: string) {
+    setRedTarget(option.targetIndex);
+    setManualDraft(text);
+    setEditingHistoryId(option.entry.id);
+    setRedMode("manual");
+  }
+  function applyHistoricalRecommendation(option: HistoricalRecommendation, mode: "history" | "recommended") {
+    const text = mode === "history" ? option.historicalText : option.recommendedText;
+    if (!fitsOriginalLayout(option.targetIndex, text)) return;
+    const sourceText = resumeTexts[option.targetIndex] || "";
+    const nextTexts = resumeTexts.map((item, index) => index === option.targetIndex ? text : item);
+    const concept = currentLexicon.concepts.find((candidate) => candidate.id === selected.conceptId)
+      || { id: selected.conceptId || selected.id, label: selected.label, terms: [{ value: selected.label, source: "manual" as const }] };
+    const match = matchConceptToResume(selected.label, concept, nextTexts);
+    const yellowEdit = match.status === "yellow" && match.resumeMatch && normalizeBulletText(option.recommendedText) !== normalizeBulletText(text) ? {
+      targetIndex: option.targetIndex,
+      phraseBefore: match.resumeMatch,
+      phraseAfter: selected.label,
+      beforeText: text,
+      afterText: option.recommendedText,
+      guidance: `将历史记录中的 ${match.resumeMatch} 调整为当前职位使用的 ${selected.label}`,
+      originalChars: text.length,
+      newChars: option.recommendedText.length,
+      maxChars: sourceText.length || text.length,
+    } : undefined;
+    rememberUndo();
+    setResumeTexts(nextTexts);
+    setKeywords((items) => items.map((item) => item.id === selected.id ? { ...item, ...match, yellowEdit } : item));
+    setBulletHistory((items) => items.map((item) => item.id === option.entry.id ? { ...item, useCount: item.useCount + 1, updatedAt: new Date().toISOString() } : item));
+    if (mode === "recommended" && normalizeBulletText(option.recommendedText) !== normalizeBulletText(option.historicalText)) {
+      recordBulletHistory(selected, option.recommendedText, { sourceText, sourceIndex: option.targetIndex, origin: "synonym", incrementUse: true });
+    }
+    setRedDialogOpen(false);
+    showNotice(mode === "history" ? "已采用历史记录" : "已采用按当前关键词生成的推荐修改");
+  }
+
+  function resolvePendingHistorySave(mode: "update" | "new" | "current") {
+    if (!pendingHistorySave) return;
+    if (mode === "update") {
+      const timestamp = new Date().toISOString();
+      setBulletHistory((items) => items.map((item) => item.id === pendingHistorySave.entryId ? {
+        ...item,
+        text: pendingHistorySave.text,
+        keywordLabel: selected.label,
+        origin: "manual",
+        sourceText: pendingHistorySave.sourceText,
+        sourceIndex: pendingHistorySave.targetIndex,
+        updatedAt: timestamp,
+        useCount: item.useCount + 1,
+      } : item));
+      showNotice("已更新原有历史记录");
+    } else if (mode === "new") {
+      recordBulletHistory(selected, pendingHistorySave.text, { sourceText: pendingHistorySave.sourceText, sourceIndex: pendingHistorySave.targetIndex, origin: "manual", incrementUse: true });
+      showNotice("已新增一个历史版本");
+    }
+    setPendingHistorySave(null);
   }
   function selectManualBullet(index: number) {
     setRedTarget(index);
     setManualDraft(resumeTexts[index] || "");
   }
   function advanceToNext() {
-    if (finalCheckBusy || finalCheckPassed) return;
+    if (finalCheckPassed) return;
     if (!keywordReviewStarted) {
       setKeywordReviewStarted(true);
       if (selected.status === "red") loadRewriteSuggestions(selected);
@@ -800,7 +1046,7 @@ export default function ResumeMatchWorkspace() {
     let nextIndex = currentIndex + 1;
     if (nextIndex >= keywords.length) {
       const unresolvedIndex = keywords.findIndex((item, index) => index !== currentIndex && (item.status === "yellow" || item.status === "red"));
-      if (unresolvedIndex < 0) return runFinalCheck();
+      if (unresolvedIndex < 0) return prepareExport();
       nextIndex = unresolvedIndex;
       showNotice("已回到尚未处理的关键词");
     }
@@ -841,50 +1087,17 @@ export default function ResumeMatchWorkspace() {
     if (offset < text.length) result.push(<span key="text-end">{text.slice(offset)}</span>);
     return result;
   }
-  async function runFinalCheck() {
+  function prepareExport() {
     const unresolved = keywords.find((item) => item.status === "yellow" || item.status === "red");
     if (unresolved) {
       setSelectedId(unresolved.id);
       setKeywordReviewStarted(true);
       if (unresolved.status === "red") loadRewriteSuggestions(unresolved);
       else setKeywordCardOpen(true);
-      showNotice("请先处理或忽略所有待调整关键词，再进行最终校对");
+      showNotice("请先处理或忽略所有待调整关键词，再导出 Word");
       return;
     }
-    setFinalCheckBusy(true);
-    try {
-      await loadProofreadingDictionary();
-      const issues = proofreadResume(resumeTexts);
-      setProofreadingIssues(issues);
-      if (issues.length) {
-        setProofreadingOpen(true);
-        setFinalCheckPassed(false);
-        showNotice(`本地校对发现 ${issues.length} 处需要确认`);
-      } else {
-        setFinalCheckPassed(true);
-        showNotice("本地校对通过");
-      }
-    } catch (error) {
-      console.error(error);
-      showNotice("本地英文词典加载失败，请重试");
-    } finally {
-      setFinalCheckBusy(false);
-    }
-  }
-
-  function applyProofreadingIssue(issue: ProofreadingIssue) {
-    rememberUndo();
-    const nextTexts = resumeTexts.map((text, index) => index === issue.lineIndex ? applyProofreadingFix(text, issue) : text);
-    setResumeTexts(nextTexts);
-    setProofreadingIssues(proofreadResume(nextTexts));
-    setResumeRenderRevision((revision) => revision + 1);
-  }
-
-  function finishProofreadingReview() {
-    setProofreadingOpen(false);
-    setProofreadingIssues([]);
     setFinalCheckPassed(true);
-    showNotice("已完成本地校对确认");
   }
   function addManualTerm() {
     const text = window.getSelection()?.toString().trim();
@@ -1044,6 +1257,8 @@ export default function ResumeMatchWorkspace() {
         downloadBlob(docxBlob, docName);
         await desktopStorage.recordExportName(docName);
       }
+      const currentProject = projects.find((project) => project.id === activeProjectId);
+      if (currentProject?.applicationStage === "editing") updateApplicationProject(activeProjectId, { applicationStage: "exported" });
       setFinalCheckPassed(false);
       showNotice(`已导出 ${savedName}`);
     } catch (error) {
@@ -1064,18 +1279,18 @@ export default function ResumeMatchWorkspace() {
     <main className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => setView("applications")}><span className="brand-mark">R</span><span>ResumeMatch</span></button>
-        <div className="project-title">{view === "workspace" ? <><button className="icon-btn" aria-label="返回项目列表" onClick={() => setView("applications")}><ArrowLeft /></button><div><div className="title-row">{editingProjectName ? <span className="project-name-editor"><input autoFocus value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectNameDraft.trim()) { setProjectName(projectNameDraft.trim()); setEditingProjectName(false); } if (event.key === "Escape") setEditingProjectName(false); }} /><button onClick={() => { if (projectNameDraft.trim()) setProjectName(projectNameDraft.trim()); setEditingProjectName(false); }}>保存</button></span> : <><strong>{projectReady ? projectName : "新建申请项目"}</strong>{projectReady && <button className="rename-project" aria-label="重命名项目" onClick={() => { setProjectNameDraft(projectName); setEditingProjectName(true); }}><Pencil /></button>}</>}{projectReady && <span className="saved"><HardDrive /> 已保存到本机</span>}</div><span className="subtle">{resumeName ? `基于简历版本：${resumeName}` : "请先上传基础简历"}</span></div></> : <><LayoutGrid /><div><div className="title-row"><strong>{view === "applications" ? "申请项目" : view === "resumes" ? "基础简历" : "素材收藏"}</strong></div><span className="subtle">本机个人工作区</span></div></>}</div>
+        <div className="project-title">{view === "workspace" ? <><button className="icon-btn" aria-label="返回项目列表" onClick={() => setView("applications")}><ArrowLeft /></button><div><div className="title-row">{editingProjectName ? <span className="project-name-editor"><input autoFocus value={projectNameDraft} onChange={(event) => setProjectNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectNameDraft.trim()) { setProjectName(projectNameDraft.trim()); setEditingProjectName(false); } if (event.key === "Escape") setEditingProjectName(false); }} /><button onClick={() => { if (projectNameDraft.trim()) setProjectName(projectNameDraft.trim()); setEditingProjectName(false); }}>保存</button></span> : <><strong>{projectReady ? projectName : "新建申请项目"}</strong>{projectReady && <button className="rename-project" aria-label="重命名项目" onClick={() => { setProjectNameDraft(projectName); setEditingProjectName(true); }}><Pencil /></button>}</>}{projectReady && <span className="saved"><HardDrive /> 已保存到本机</span>}</div><span className="subtle">{resumeName ? `基于简历版本：${resumeName}` : "请先上传基础简历"}</span></div></> : <><LayoutGrid /><div><div className="title-row"><strong>{view === "applications" ? "申请项目" : view === "resumes" ? "基础简历" : "Bullet 素材库"}</strong></div><span className="subtle">本机个人工作区</span></div></>}</div>
         <div className="top-actions"><Button variant="outline" className={`ai-settings-trigger ${aiConnected ? "connected" : ""}`} onClick={() => setAiSettingsOpen(true)}><Settings />设置</Button>{view === "workspace" && projectReady && <>
           <Button variant="outline" className="delete-project-button" onClick={() => deleteProject(activeProjectId)}><Trash2 />删除项目</Button>
           <Button variant="outline" onClick={() => void rescan()} disabled={scanBusy || conceptReviewBusy}><RefreshCw className={scanBusy || conceptReviewBusy ? "animate-spin" : ""} />{conceptReviewBusy ? "正在整理新增词" : scanBusy ? "匹配中" : "重新匹配"}</Button>
-          <Button className="export-btn" onClick={runFinalCheck} disabled={finalCheckBusy || exportBusy}><Download />{finalCheckBusy ? "正在校对" : exportBusy ? "正在导出" : "校对并导出"}</Button>
+          <Button className="export-btn" onClick={prepareExport} disabled={exportBusy}><Download />{exportBusy ? "正在导出" : "导出 Word"}</Button>
         </>}</div>
       </header>
 
       <div className="body-grid">
         <aside className="sidebar">
-          <nav><button className={`nav-item ${view === "applications" || view === "workspace" ? "active" : ""}`} onClick={() => setView("applications")}><FolderKanban />申请项目<span className="nav-count">{projects.length}</span></button><button className={`nav-item ${view === "resumes" ? "active" : ""}`} onClick={() => setView("resumes")}><FileText />基础简历<span className="nav-count">{resumes.length}</span></button><button className={`nav-item ${view === "favorites" ? "active" : ""}`} onClick={() => setView("favorites")}><Bookmark />素材收藏<span className="nav-count">{favoriteIds.length}</span></button></nav>
-          {projects.length > 0 && <><div className="sidebar-label">最近申请</div>{projects.slice(0, 5).map((project) => <button key={project.id} className={`application ${view === "workspace" && activeProjectId === project.id ? "active" : ""}`} onClick={() => openProject(project)}><span className="company-logo">{project.companyName.charAt(0) || "J"}</span><span><b title={project.name}>{project.name}</b><small>{project.jobTitle}</small></span><span className="progress-ring">{projectCoverage(project)}</span></button>)}</>}
+          <nav><button className={`nav-item ${view === "applications" || view === "workspace" ? "active" : ""}`} onClick={() => setView("applications")}><FolderKanban />申请项目<span className="nav-count">{projects.length}</span></button><button className={`nav-item ${view === "resumes" ? "active" : ""}`} onClick={() => setView("resumes")}><FileText />基础简历<span className="nav-count">{resumes.length}</span></button><button className={`nav-item ${view === "favorites" ? "active" : ""}`} onClick={() => setView("favorites")}><Bookmark />Bullet 素材库<span className="nav-count">{bulletHistory.length}</span></button></nav>
+          {projects.length > 0 && <><div className="sidebar-label">最近申请</div>{[...projects].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 5).map((project) => <button key={project.id} className={`application ${view === "workspace" && activeProjectId === project.id ? "active" : ""}`} onClick={() => openProject(project)}><span className="company-logo">{project.companyName.charAt(0) || "J"}</span><span><b title={project.name}>{project.name}</b><small>{project.jobTitle}</small></span><span className="progress-ring">{projectCoverage(project)}</span></button>)}</>}
           <button className="new-project" onClick={() => startNewProject()}><Plus />新建申请项目</button>
           <div className="sidebar-bottom"><div className="user-card"><span className="avatar">我</span><span><b>个人工作区</b><small>本地使用</small></span></div></div>
         </aside>
@@ -1095,7 +1310,7 @@ export default function ResumeMatchWorkspace() {
                 {manualTerms.length > 0 && <div className="manual-terms"><b>待归类的手动关键词</b>{manualTerms.map((term) => <span key={term}>{term}<button aria-label={`移除 ${term}`} onClick={() => removePendingTerm(term)}><X /></button></span>)}</div>}
                 {keywords.length > 0 && <div className="manual-results"><b>当前关键词</b><p>点击可查看或处理匹配结果</p><div>{keywords.map((keyword) => <KeywordMark key={keyword.id} keyword={keyword} selected={selectedId === keyword.id} onClick={(event) => chooseKeyword(keyword, event)} />)}</div></div>}
               </article></div>
-              <div className="legend"><span><i className="green" />已覆盖</span><span><i className="yellow" />相近表达</span><span><i className="red" />未覆盖</span><span><i className="ignored" />已忽略</span><button className={`next-keyword ${selected.status}`} onClick={advanceToNext} disabled={finalCheckBusy}>{finalCheckBusy ? "正在检查…" : nextActionLabel}<kbd>Ctrl ↵</kbd><ArrowRight /></button></div>
+              <div className="legend"><span><i className="green" />已覆盖</span><span><i className="yellow" />相近表达</span><span><i className="red" />未覆盖</span><span><i className="ignored" />已忽略</span><button className={`next-keyword ${selected.status}`} onClick={advanceToNext}>{nextActionLabel}<kbd>Ctrl ↵</kbd><ArrowRight /></button></div>
             </section>
 
             <section className="resume-pane">
@@ -1107,7 +1322,7 @@ export default function ResumeMatchWorkspace() {
               {keywordCardOpen && selected.status === "ignored" && <aside className="keyword-state-card ignored-card floating-suggestion" style={{ left: popupPosition.left, top: popupPosition.top }}><span className="ignored-icon">—</span><div><b>已忽略：{selected.label}</b><p>这项目前不会计入修改清单。</p></div><button className="state-card-action" onClick={restoreKeyword}>重新考虑</button></aside>}
             </section>
           </div>
-        </section> : <LibraryPage view={view} onNewProject={() => startNewProject()} onOpenProject={openProject} onDeleteProject={deleteProject} projects={projects} onUpload={() => fileRef.current?.click()} resumes={resumes} onUseResume={useResume} onRenameResume={renameResume} onDeleteResume={deleteResume} />}
+        </section> : <LibraryPage view={view} onNewProject={() => startNewProject()} onOpenProject={openProject} onDeleteProject={deleteProject} projects={projects} onUpload={() => fileRef.current?.click()} resumes={resumes} onUseResume={useResume} onRenameResume={renameResume} onDeleteResume={deleteResume} bulletHistory={bulletHistory} onDeleteBulletHistory={deleteBulletHistory} jobFunctions={jobFunctions} onJobFunctionsChange={setJobFunctions} onUpdateProject={updateApplicationProject} onAddManualProject={addManualProject} onNotice={showNotice} />}
       </div>
 
       <Dialog open={aiSettingsOpen} onOpenChange={setAiSettingsOpen}>
@@ -1121,7 +1336,7 @@ export default function ResumeMatchWorkspace() {
             </aside>
             <section className="settings-content">
               {settingsSection === "models" && <div className="settings-panel">
-                <div className="settings-panel-header"><div><h3>模型服务</h3><p>模型用于生成改写建议和归类新增词，最终校对仍在本地完成。</p></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
+                <div className="settings-panel-header"><div><h3>模型服务</h3><p>模型用于生成改写建议和归类新增词。</p></div><span className={`provider-badge ${aiConnected ? "ok" : ""}`}>{aiConnected ? "已连接" : "未连接"}</span></div>
                 <div className="provider-tabs" role="tablist" aria-label="模型服务商">{providerOptions.map((provider) => <button key={provider.id} role="tab" aria-selected={aiProvider === provider.id} className={aiProvider === provider.id ? "active" : ""} onClick={() => switchProvider(provider.id)}><span>{provider.shortLabel}</span>{connectedProviders.includes(provider.id) && <i title="已配置" />}</button>)}</div>
                 <div className="ai-settings-form">
                   <div className="provider-heading"><div><b>{activeProviderInfo.label}</b><span>连接后会读取可用模型，并为当前服务商保留模型选择</span></div></div>
@@ -1176,18 +1391,22 @@ export default function ResumeMatchWorkspace() {
           <div className="concept-review-footer"><span>未修改的建议会直接采用</span><Button variant="outline" onClick={() => setConceptReviewOpen(false)}>稍后处理</Button><Button onClick={confirmConceptReview}>确认并学习全部</Button></div>
         </DialogContent>
       </Dialog>
-      <Dialog open={proofreadingOpen} onOpenChange={setProofreadingOpen}><DialogContent className="proofreading-dialog sm:max-w-[720px]"><DialogHeader><DialogTitle>本地校对发现 {proofreadingIssues.length} 处需要确认</DialogTitle><DialogDescription>只检查正文中高置信度的拼写、重复、空格、标点和占位文字；姓名与联系方式会跳过，也不检查 a/the、冠词选择或单复数用法。</DialogDescription></DialogHeader><div className="proofreading-list">{proofreadingIssues.map((issue) => <article key={issue.id}><div><b>{issue.message}</b><span>第 {issue.lineIndex + 1} 个文本段</span><p>{issue.excerpt}</p></div>{issue.after !== undefined ? <Button variant="outline" onClick={() => applyProofreadingIssue(issue)}>改为“{issue.after}”</Button> : <span className="manual-review-label">请人工确认</span>}</article>)}</div><div className="proofreading-actions"><Button variant="outline" onClick={() => setProofreadingOpen(false)}>返回修改</Button><Button onClick={finishProofreadingReview}>其余问题已确认，继续</Button></div></DialogContent></Dialog>
-      <Dialog open={finalCheckPassed} onOpenChange={setFinalCheckPassed}><DialogContent className="completion-dialog sm:max-w-[480px]"><div className="completion-icon"><Check /></div><DialogHeader><DialogTitle>最终检查通过</DialogTitle><DialogDescription>关键词处理和本地校对均已完成，可以导出 Word 文件。</DialogDescription></DialogHeader><div className="completion-summary"><span>关键词覆盖率 <b>{score}%</b></span><span>已忽略 <b>{counts.ignored}</b></span><span>校对问题 <b>0</b></span></div><div className="completion-actions"><Button variant="outline" onClick={() => setFinalCheckPassed(false)}>返回检查</Button><Button onClick={exportResume} disabled={exportBusy}><Download />{exportBusy ? "正在生成文件…" : "导出 Word"}</Button></div></DialogContent></Dialog>
+      <Dialog open={finalCheckPassed} onOpenChange={setFinalCheckPassed}><DialogContent className="completion-dialog sm:max-w-[480px]"><div className="completion-icon"><Check /></div><DialogHeader><DialogTitle>准备导出</DialogTitle><DialogDescription>所有关键词均已处理，可以导出 Word 文件并在 Word 中进行拼写和语法检查。</DialogDescription></DialogHeader><div className="completion-summary"><span>关键词覆盖率 <b>{score}%</b></span><span>已忽略 <b>{counts.ignored}</b></span></div><div className="completion-actions"><Button variant="outline" onClick={() => setFinalCheckPassed(false)}>返回检查</Button><Button onClick={exportResume} disabled={exportBusy}><Download />{exportBusy ? "正在生成文件…" : "导出 Word"}</Button></div></DialogContent></Dialog>
       {notice && <div className="toast"><Check />{notice}</div>}
       <Dialog open={redDialogOpen} onOpenChange={setRedDialogOpen}><DialogContent className="red-dialog gap-0 overflow-hidden border-0 p-0 sm:max-w-[1040px]"><DialogHeader className="border-b px-6 py-5"><div className="dialog-kicker"><span className="red-dot" />尚未覆盖</div><DialogTitle>怎样补入 “{selected.label}”</DialogTitle><DialogDescription>每个方案都会标出改动位置。采用前请确认内容准确反映你的真实经历。</DialogDescription></DialogHeader>
-        {redMode === "choices" && <div className="option-list">{rewriteBusy ? <div className="rewrite-loading"><LoaderCircle className="animate-spin" /><b>模型正在核对经历和关键词</b><p>只有现有内容能支持的事实才会进入改写建议。</p></div> : currentSuggestions.length === 0 ? <div className="no-rewrite-candidates"><b>当前没有可安全采用的改写建议</b><p>{rewriteQuestion || "系统已排除姓名、联系方式、教育背景和栏目标题。你可以补充真实素材或自己编辑。"}</p></div> : currentSuggestions.map((option, index) => {
+        {redMode === "choices" && <div className="option-list">{historicalRecommendations.length > 0 && <section className="history-recommendations"><header><div><b>同一关键词概念的历史记录</b><p>系统会保留历史内容，并用当前关键词生成推荐修改。</p></div><span>{historicalRecommendations.length} 条</span></header>{historicalRecommendations.map((option, index) => {
+          const target = resumeTexts[option.targetIndex] || "";
+          const adapted = normalizeBulletText(option.historicalText) !== normalizeBulletText(option.recommendedText);
+          return <article className="history-recommendation" key={option.entry.id}><div className="history-recommendation-heading"><span>{index + 1}</span><div><b>{option.entry.conceptLabel}</b><small>历史关键词：{option.historicalKeyword} · 建议写入第 {option.targetIndex + 1} 条经历</small></div></div><div className="history-version"><label>历史记录</label><p>{option.historicalText}</p><small>{option.historicalText.length} 字符；采用后将按当前 Word 版式检查</small><div><button onClick={() => applyHistoricalRecommendation(option, "history")}>采用历史记录</button><button onClick={() => editHistoricalRecommendation(option, option.historicalText)}>修改</button></div></div><div className="history-version recommended"><label>推荐修改</label>{adapted ? <span className="keyword-adaptation">{option.replacedTerm} → {option.currentKeyword}</span> : <span className="keyword-adaptation">{option.hasCurrentKeyword ? "已经包含当前关键词" : "未找到可原位替换的词面"}</span>}<p>{option.recommendedText}</p><small>长度：{option.recommendedText.length} / 当前目标 {target.length || option.recommendedText.length} 字符；采用时检查实际行数</small><div><button className="primary" onClick={() => applyHistoricalRecommendation(option, "recommended")}>采用推荐修改</button><button onClick={() => editHistoricalRecommendation(option, option.recommendedText)}>修改</button></div></div></article>;
+        })}</section>}{rewriteBusy ? <div className="rewrite-loading"><LoaderCircle className="animate-spin" /><b>模型正在核对经历和关键词</b><p>只有现有内容能支持的事实才会进入改写建议。</p></div> : currentSuggestions.length === 0 && historicalRecommendations.length === 0 ? <div className="no-rewrite-candidates"><b>当前没有可安全采用的改写建议</b><p>{rewriteQuestion || "系统已排除姓名、联系方式、教育背景和栏目标题。你可以补充真实素材或自己编辑。"}</p></div> : currentSuggestions.map((option, index) => {
           const before = resumeTexts[option.targetIndex] || "";
           return <article key={`${option.title}-${index}`} className="rewrite-option"><span className="option-number">{index + 1}</span><span className="option-copy"><span><b>{option.title}</b><em>{option.target}</em></span><div className="diff-row before"><label>修改前</label><p><DiffText before={before} after={option.text} side="before" /></p></div><div className="diff-arrow">↓</div><div className="diff-row after"><label>修改后</label><p><DiffText before={before} after={option.text} side="after" /></p></div><small>{option.originalChars && option.maxChars ? `长度：${option.originalChars} → ${option.newChars ?? option.text.length} 字符，上限 ${option.maxChars}` : "采用后会按 Word 实际行数再次检查"}</small></span><span className="option-actions"><button className="apply-option" onClick={() => applyRed(option)}>采用</button><button onClick={() => editSuggestedRewrite(option)}>修改</button></span></article>;
         })}</div>}
         {redMode !== "choices" && <div className="red-workbench"><BulletContextPanel texts={resumeTexts} target={redTarget} onTargetChange={selectManualBullet} /><div className="alternative-panel">
           {redMode === "manual" && <><button className="back-link" onClick={() => setRedMode("choices")}><ArrowLeft />返回推荐方案</button><h3>编辑这条经历</h3><p>文本框里已带入当前版本。你可以直接微调，也可以输入中文素材后交给模型整理成英文。</p><textarea value={manualDraft} onChange={(event) => setManualDraft(event.target.value)} placeholder={`修改这条经历，并自然加入 ${selected.label}…`} /><div className="bullet-editor-meta"><span>原文 {resumeTexts[redTarget]?.length || 0} 字符</span><span>当前 {manualDraft.length} 字符</span><span className={manualDraft.length > (resumeTexts[redTarget]?.length || 0) ? "over" : ""}>上限 {resumeTexts[redTarget]?.length || 0} 字符</span></div><div className="panel-actions"><Button variant="outline" onClick={() => { const source = resumeTexts[redTarget]; const draft = manualDraft.trim(); if (source && draft) void requestRewrite(selected, [{ text: draft, index: redTarget, originalChars: source.length, maxChars: source.length }], "", "replace"); }} disabled={rewriteBusy || !manualDraft.trim()}>{rewriteBusy ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}{rewriteBusy ? "正在润色" : "用 LLM 润色"}</Button><Button onClick={() => applyUserDraft(manualDraft)} disabled={!manualDraft.trim()}><Check />直接写入</Button></div></>}
         </div></div>}
-        <div className="dialog-alternatives"><span>推荐不合适？</span><button onClick={retryRewriteRecommendations} disabled={rewriteBusy || selected.rewriteRetryUsed}><RefreshCw />{selected.rewriteRetryUsed ? "已用过换一批" : "换一批（仅一次）"}</button><button onClick={openManualBulletEditor}><FileText />自己编辑这条经历</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />推断不会新增数字或成果</span></div></DialogContent></Dialog>
+        <div className="dialog-alternatives"><span>推荐不合适？</span>{historicalRecommendations.length > 0 && currentSuggestions.length === 0 ? <button onClick={requestNewRewriteSuggestions} disabled={rewriteBusy}><WandSparkles />生成新的 AI 建议</button> : <button onClick={retryRewriteRecommendations} disabled={rewriteBusy || selected.rewriteRetryUsed}><RefreshCw />{selected.rewriteRetryUsed ? "已用过换一批" : "换一批（仅一次）"}</button>}<button onClick={openManualBulletEditor}><FileText />自己编辑这条经历</button></div><div className="dialog-footer keyword-footer-actions"><button onClick={() => removeKeyword(selected.id)}>这不是关键词</button><button onClick={() => { updateStatus(selected.id, "ignored"); setRedDialogOpen(false); }}>暂时忽略</button><button onClick={() => approveKeyword(selected.id)}>无需调整，标为绿色</button><span><CircleHelp />历史推荐不会新增事实</span></div></DialogContent></Dialog>
+      <Dialog open={Boolean(pendingHistorySave)} onOpenChange={(open) => { if (!open) resolvePendingHistorySave("current"); }}><DialogContent className="history-save-dialog sm:max-w-[520px]"><DialogHeader><DialogTitle>如何保存这次修改？</DialogTitle><DialogDescription>这条内容从已有历史记录继续修改而来。当前项目已经写入，你可以决定素材库如何保存。</DialogDescription></DialogHeader><div className="history-save-preview">{pendingHistorySave?.text}</div><div className="history-save-actions"><Button variant="outline" onClick={() => resolvePendingHistorySave("current")}>只用于当前项目</Button><Button variant="outline" onClick={() => resolvePendingHistorySave("update")}>更新原记录</Button><Button onClick={() => resolvePendingHistorySave("new")}>新增为另一版本</Button></div></DialogContent></Dialog>
       <input ref={fileRef} type="file" accept=".docx" className="hidden" onChange={(event) => void handleResumeUpload(event.target.files?.[0])} />
     </main>
   );

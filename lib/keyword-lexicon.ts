@@ -17,7 +17,7 @@ export type KeywordConcept = Readonly<{
   terms: readonly string[];
 }>;
 
-export const KEYWORD_LEXICON_VERSION = "1.5.0";
+export const KEYWORD_LEXICON_VERSION = "1.5.1";
 
 export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   // Product management and product strategy
@@ -149,7 +149,7 @@ export const KEYWORD_CONCEPTS: readonly KeywordConcept[] = [
   { id: "board_communication", label: "board communication", terms: ["board communication", "board presentation", "board materials"] },
 
   // Analytics, finance, and operating metrics
-  { id: "data_analysis", label: "data analysis", terms: ["data analysis"] },
+  { id: "data_analysis", label: "data analysis", terms: ["data analysis", "data analytics"] },
   { id: "quantitative_analysis", label: "quantitative analysis", terms: ["quantitative analysis", "quantitative research"] },
   { id: "qualitative_analysis", label: "qualitative analysis", terms: ["qualitative analysis", "qualitative research"] },
   { id: "data_driven", label: "data-driven", terms: ["data-driven", "data driven", "data-informed", "data informed", "metrics-driven", "metrics driven"] },

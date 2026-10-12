@@ -1,6 +1,7 @@
 type DesktopSnapshot = {
   resumes: unknown[];
   projects: unknown[];
+  bulletHistory: unknown[];
   settings: Record<string, unknown>;
 };
 
@@ -10,6 +11,8 @@ type DesktopBridge = {
   stageResumes?: (resumes: unknown[]) => void;
   saveProjects: (projects: unknown[]) => Promise<void>;
   stageProjects?: (projects: unknown[]) => void;
+  saveBulletHistory: (entries: unknown[]) => Promise<void>;
+  stageBulletHistory?: (entries: unknown[]) => void;
   saveSetting: (key: string, value: unknown) => Promise<void>;
   loadApiKeys?: () => Promise<Record<string, string>>;
   saveApiKey?: (provider: string, apiKey: string) => Promise<void>;
@@ -20,6 +23,7 @@ type DesktopBridge = {
   chooseExportDirectory: (currentPath?: string) => Promise<string | null>;
   openPath: (targetPath: string) => Promise<void>;
   exportDocument: (directory: string, fileName: string, bytes: Uint8Array) => Promise<{ fileName: string; outputPath: string }>;
+  exportSpreadsheet: (fileName: string, bytes: Uint8Array) => Promise<{ fileName: string; outputPath: string } | null>;
 };
 
 declare global {
@@ -34,14 +38,16 @@ export const desktopStorage = {
   isAvailable: () => Boolean(bridge()),
   async load<TResume, TProject>() {
     const api = bridge();
-    if (!api) return { resumes: [] as TResume[], projects: [] as TProject[], settings: {} as Record<string, unknown> };
+    if (!api) return { resumes: [] as TResume[], projects: [] as TProject[], bulletHistory: [] as unknown[], settings: {} as Record<string, unknown> };
     const snapshot = await api.load();
-    return { resumes: snapshot.resumes as TResume[], projects: snapshot.projects as TProject[], settings: snapshot.settings };
+    return { resumes: snapshot.resumes as TResume[], projects: snapshot.projects as TProject[], bulletHistory: snapshot.bulletHistory || [], settings: snapshot.settings };
   },
   saveResumes: (resumes: unknown[]) => bridge()?.saveResumes(resumes) ?? Promise.resolve(),
   stageResumes: (resumes: unknown[]) => bridge()?.stageResumes?.(resumes),
   saveProjects: (projects: unknown[]) => bridge()?.saveProjects(projects) ?? Promise.resolve(),
   stageProjects: (projects: unknown[]) => bridge()?.stageProjects?.(projects),
+  saveBulletHistory: (entries: unknown[]) => bridge()?.saveBulletHistory(entries) ?? Promise.resolve(),
+  stageBulletHistory: (entries: unknown[]) => bridge()?.stageBulletHistory?.(entries),
   saveSetting: (key: string, value: unknown) => bridge()?.saveSetting(key, value) ?? Promise.resolve(),
   loadApiKeys: (): Promise<Record<string, string>> => bridge()?.loadApiKeys?.() ?? Promise.resolve({}),
   saveApiKey: (provider: string, apiKey: string) => bridge()?.saveApiKey?.(provider, apiKey) ?? Promise.resolve(),
@@ -52,4 +58,5 @@ export const desktopStorage = {
   chooseExportDirectory: (currentPath?: string) => bridge()?.chooseExportDirectory(currentPath) ?? Promise.resolve(null),
   openPath: (targetPath: string) => bridge()?.openPath(targetPath) ?? Promise.resolve(),
   exportDocument: (directory: string, fileName: string, bytes: Uint8Array) => bridge()?.exportDocument(directory, fileName, bytes),
+  exportSpreadsheet: (fileName: string, bytes: Uint8Array) => bridge()?.exportSpreadsheet(fileName, bytes),
 };

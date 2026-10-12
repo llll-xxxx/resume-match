@@ -24,7 +24,7 @@ Changing a few words in a resume can add an unwanted line and shift the rest of 
 
 ### Download, install, and open
 
-Download `ResumeMatch-0.1.0-beta-Setup.exe` from [GitHub Releases](https://github.com/llll-xxxx/resume-match/releases). Run the installer, then open ResumeMatch from the Start menu or its desktop shortcut. The `Source code (zip)` and `Source code (tar.gz)` files are source archives, not installers.
+Download `ResumeMatch-0.1.1-beta-Setup.exe` from [GitHub Releases](https://github.com/llll-xxxx/resume-match/releases). Run the installer, then open ResumeMatch from the Start menu or its desktop shortcut. The `Source code (zip)` and `Source code (tar.gz)` files are source archives, not installers.
 
 This is a Windows x64 beta release without a code-signing certificate. If Windows warns that the publisher is unverified, check that you downloaded the installer from this repository's Release page before deciding whether to continue.
 
@@ -75,7 +75,7 @@ This is a beta release. Report problems in [Issues](https://github.com/llll-xxxx
 
 ### 下载、安装和打开
 
-在 [GitHub Releases](https://github.com/llll-xxxx/resume-match/releases) 下载 `ResumeMatch-0.1.0-beta-Setup.exe`，双击安装，然后从开始菜单或桌面快捷方式打开。页面上的 `Source code (zip)` 和 `Source code (tar.gz)` 是源代码，不是安装包。
+在 [GitHub Releases](https://github.com/llll-xxxx/resume-match/releases) 下载 `ResumeMatch-0.1.1-beta-Setup.exe`，双击安装，然后从开始菜单或桌面快捷方式打开。页面上的 `Source code (zip)` 和 `Source code (tar.gz)` 是源代码，不是安装包。
 
 目前提供的是 Windows x64 测试版，尚未配置代码签名证书。如果 Windows 提示发布者未经验证，请先确认安装包来自本项目的 Release 页面，再决定是否继续安装。
 
@@ -84,7 +84,7 @@ This is a beta release. Report problems in [Issues](https://github.com/llll-xxxx
 1. 在“基础简历”中导入你的 `.docx` 简历。
 2. 新建申请项目，选择简历，并粘贴职位描述或填写招聘页面链接。
 3. 点击“读取 JD 并开始匹配”，对照职位描述和 Word 预览，逐条处理黄色、红色提示。不适用的要求可以忽略。如果网页无法自动读取，直接粘贴职位描述正文。
-4. 完成修改后，运行校对并导出新的 `.docx` 文件。原始简历不会被覆盖。
+4. 完成修改后，导出新的 `.docx` 文件，并在 Word 中进行拼写和语法检查。原始简历不会被覆盖。
 
 ### 设置 LLM API
 
@@ -100,6 +100,6 @@ This is a beta release. Report problems in [Issues](https://github.com/llll-xxxx
 
 基础简历、申请项目和设置保存在当前 Windows 用户的 `%LOCALAPPDATA%\ResumeMatch\` 目录。默认导出目录为“文档\ResumeMatch\Exports”；可以在“设置 → 导出与命名”中更改目录和文件名。已有导出文件不会被覆盖。
 
-API Key 通过 Windows 安全存储加密后保存在本机。从链接读取职位描述需要联网；对已粘贴的文本进行匹配和本地校对不需要 LLM API Key。
+API Key 通过 Windows 安全存储加密后保存在本机。从链接读取职位描述需要联网；对已粘贴的文本进行匹配不需要 LLM API Key。
 
 这是一个测试版。遇到问题可以在 [Issues](https://github.com/llll-xxxx/resume-match/issues) 中反馈。项目结构、开发、构建和发布说明见 [开发文档](docs/DEVELOPMENT.md)。

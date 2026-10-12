@@ -18,13 +18,23 @@ let storage;
 let mainWindow;
 let stagedResumes;
 let stagedProjects;
+let stagedBulletHistory;
+
+function logStartup(message) {
+  const startedAt = Number(process.env.RESUME_MATCH_START_TIME);
+  if (Number.isFinite(startedAt) && startedAt > 0) {
+    console.log(`[启动 +${((Date.now() - startedAt) / 1000).toFixed(1)}s] ${message}`);
+  }
+}
 
 function flushStagedData() {
   if (!storage) return;
   if (Array.isArray(stagedResumes)) storage.saveResumes(stagedResumes);
   if (Array.isArray(stagedProjects)) storage.saveProjects(stagedProjects);
+  if (Array.isArray(stagedBulletHistory)) storage.saveBulletHistory(stagedBulletHistory);
   stagedResumes = undefined;
   stagedProjects = undefined;
+  stagedBulletHistory = undefined;
 }
 
 function revealMainWindow() {
@@ -122,6 +132,12 @@ function registerStorageHandlers() {
     if (!Array.isArray(projects)) throw new Error("项目数据格式无效");
     stagedProjects = projects;
   });
+  handle("storage:save-bullet-history", (entries) => storage.saveBulletHistory(entries));
+  ipcMain.on("storage:stage-bullet-history", (event, entries) => {
+    trusted(event);
+    if (!Array.isArray(entries)) throw new Error("Bullet 历史数据格式无效");
+    stagedBulletHistory = entries;
+  });
   handle("storage:save-setting", (key, value) => storage.saveSetting(key, value));
   handle("credentials:load-api-keys", () => loadApiKeys());
   handle("credentials:save-api-key", (provider, apiKey) => saveApiKey(provider, apiKey));
@@ -157,9 +173,21 @@ function registerStorageHandlers() {
     storage.recordExportName(candidate);
     return { fileName: candidate, outputPath };
   });
+  handle("desktop:export-spreadsheet", async (fileName, bytes) => {
+    const safeName = `${path.parse(String(fileName || "applications.xlsx")).name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim() || "applications"}.xlsx`;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "导出申请记录",
+      defaultPath: path.join(app.getPath("documents"), safeName),
+      filters: [{ name: "Excel workbook", extensions: ["xlsx"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    writeFileSync(result.filePath, Buffer.from(bytes));
+    return { fileName: path.basename(result.filePath), outputPath: result.filePath };
+  });
 }
 
 async function createWindow() {
+  logStartup("开始创建桌面窗口");
   mainWindow = new BrowserWindow({
     title: "ResumeMatch",
     width: 1500,
@@ -193,9 +221,11 @@ async function createWindow() {
     mainWindow = undefined;
   });
   await mainWindow.loadURL(applicationUrl.href);
+  logStartup("页面加载完成");
   const bridgeReady = await mainWindow.webContents.executeJavaScript("Boolean(window.resumeMatchDesktop)");
   if (!bridgeReady) throw new Error("本地数据接口未能加载");
   revealMainWindow();
+  logStartup("桌面窗口已显示");
   console.log(`ResumeMatch data: ${storage.databasePath}`);
 }
 
@@ -206,6 +236,7 @@ else {
     if (!revealMainWindow() && app.isReady()) void createWindow();
   });
   app.whenReady().then(() => {
+    logStartup("Electron 已就绪，连接页面服务");
     return process.env.RESUME_MATCH_DEV_URL
       ? { url: new URL(process.env.RESUME_MATCH_DEV_URL), close: async () => {} }
       : startApplicationServer();
@@ -213,6 +244,7 @@ else {
     applicationServer = server;
     applicationUrl = server.url;
     storage = createLocalDatabase(path.join(appRoot, "data"));
+    logStartup("本地数据库已打开");
     registerStorageHandlers();
     return createWindow();
   }).catch((error) => {

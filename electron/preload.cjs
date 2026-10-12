@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("resumeMatchDesktop", {
   stageResumes: (resumes) => ipcRenderer.send("storage:stage-resumes", resumes),
   saveProjects: (projects) => ipcRenderer.invoke("storage:save-projects", projects),
   stageProjects: (projects) => ipcRenderer.send("storage:stage-projects", projects),
+  saveBulletHistory: (entries) => ipcRenderer.invoke("storage:save-bullet-history", entries),
+  stageBulletHistory: (entries) => ipcRenderer.send("storage:stage-bullet-history", entries),
   saveSetting: (key, value) => ipcRenderer.invoke("storage:save-setting", key, value),
   loadApiKeys: () => ipcRenderer.invoke("credentials:load-api-keys"),
   saveApiKey: (provider, apiKey) => ipcRenderer.invoke("credentials:save-api-key", provider, apiKey),
@@ -16,4 +18,5 @@ contextBridge.exposeInMainWorld("resumeMatchDesktop", {
   chooseExportDirectory: (currentPath) => ipcRenderer.invoke("desktop:choose-export-directory", currentPath),
   openPath: (targetPath) => ipcRenderer.invoke("desktop:open-path", targetPath),
   exportDocument: (directory, fileName, bytes) => ipcRenderer.invoke("desktop:export-document", directory, fileName, bytes),
+  exportSpreadsheet: (fileName, bytes) => ipcRenderer.invoke("desktop:export-spreadsheet", fileName, bytes),
 });
